@@ -1,0 +1,634 @@
+#include "media.h"
+#include "utils.h"
+#include "statusbar.h"
+#include "nav.h"
+#include <cmath>
+#include <mfapi.h>
+#include <mfidl.h>
+#include <mfreadwrite.h>
+#include <evr.h>
+#include <shlwapi.h>
+
+#pragma comment(lib, "mf.lib")
+#pragma comment(lib, "mfplat.lib")
+#pragma comment(lib, "mfuuid.lib")
+#pragma comment(lib, "strmiids.lib")
+
+// === 対応拡張子 ===
+static const wchar_t* kVideoExts[] = {
+    L".mp4", L".mkv", L".avi", L".mov", L".wmv", L".webm", L".flv", L".m4v", L".ts", L".mpg"
+};
+static const wchar_t* kAudioExts[] = {
+    L".mp3", L".wav", L".ogg", L".flac", L".m4a", L".aac", L".wma", L".opus"
+};
+
+bool IsVideoFile(const std::wstring& path) { return HasExtension(path, kVideoExts); }
+bool IsAudioFile(const std::wstring& path) { return HasExtension(path, kAudioExts); }
+bool IsMediaFile(const std::wstring& path) { return IsVideoFile(path) || IsAudioFile(path); }
+
+// ========================================
+// libmpv 動的ロード
+// ========================================
+
+// mpv API 型定義
+typedef struct mpv_handle mpv_handle;
+typedef enum { MPV_FORMAT_NONE=0, MPV_FORMAT_STRING=1, MPV_FORMAT_INT64=4, MPV_FORMAT_DOUBLE=5, MPV_FORMAT_FLAG=3 } mpv_format;
+
+// mpv 関数ポインタ
+typedef mpv_handle* (*pfn_mpv_create)();
+typedef int (*pfn_mpv_initialize)(mpv_handle*);
+typedef int (*pfn_mpv_command)(mpv_handle*, const char**);
+typedef int (*pfn_mpv_command_string)(mpv_handle*, const char*);
+typedef int (*pfn_mpv_set_option)(mpv_handle*, const char*, mpv_format, void*);
+typedef int (*pfn_mpv_set_option_string)(mpv_handle*, const char*, const char*);
+typedef int (*pfn_mpv_set_property)(mpv_handle*, const char*, mpv_format, void*);
+typedef int (*pfn_mpv_set_property_string)(mpv_handle*, const char*, const char*);
+typedef int (*pfn_mpv_get_property)(mpv_handle*, const char*, mpv_format, void*);
+typedef void (*pfn_mpv_terminate_destroy)(mpv_handle*);
+
+static HMODULE g_mpvDll = nullptr;
+static pfn_mpv_create fn_create = nullptr;
+static pfn_mpv_initialize fn_initialize = nullptr;
+static pfn_mpv_command fn_command = nullptr;
+static pfn_mpv_command_string fn_command_string = nullptr;
+static pfn_mpv_set_option fn_set_option = nullptr;
+static pfn_mpv_set_option_string fn_set_option_string = nullptr;
+static pfn_mpv_set_property fn_set_property = nullptr;
+static pfn_mpv_set_property_string fn_set_property_string = nullptr;
+static pfn_mpv_get_property fn_get_property = nullptr;
+static pfn_mpv_terminate_destroy fn_terminate_destroy = nullptr;
+
+static bool LoadMpvDll()
+{
+    if (g_mpvDll) return true;
+
+    // exe と同じディレクトリ
+    wchar_t dllPath[MAX_PATH];
+    GetModuleFileNameW(nullptr, dllPath, MAX_PATH);
+    PathRemoveFileSpecW(dllPath);
+    // libmpv-2.dll (shinchiro build) または mpv-2.dll を探す
+    PathAppendW(dllPath, L"libmpv-2.dll");
+    g_mpvDll = LoadLibraryW(dllPath);
+
+    if (!g_mpvDll) {
+        PathRemoveFileSpecW(dllPath);
+        PathAppendW(dllPath, L"mpv-2.dll");
+        g_mpvDll = LoadLibraryW(dllPath);
+    }
+
+    // フォールバック: カレントディレクトリ検索は DLL インジェクションの危険があるため廃止
+    // exe 同ディレクトリになければ libmpv は使用しない
+
+    if (!g_mpvDll) return false;
+
+    fn_create = (pfn_mpv_create)GetProcAddress(g_mpvDll, "mpv_create");
+    fn_initialize = (pfn_mpv_initialize)GetProcAddress(g_mpvDll, "mpv_initialize");
+    fn_command = (pfn_mpv_command)GetProcAddress(g_mpvDll, "mpv_command");
+    fn_command_string = (pfn_mpv_command_string)GetProcAddress(g_mpvDll, "mpv_command_string");
+    fn_set_option = (pfn_mpv_set_option)GetProcAddress(g_mpvDll, "mpv_set_option");
+    fn_set_option_string = (pfn_mpv_set_option_string)GetProcAddress(g_mpvDll, "mpv_set_option_string");
+    fn_set_property = (pfn_mpv_set_property)GetProcAddress(g_mpvDll, "mpv_set_property");
+    fn_set_property_string = (pfn_mpv_set_property_string)GetProcAddress(g_mpvDll, "mpv_set_property_string");
+    fn_get_property = (pfn_mpv_get_property)GetProcAddress(g_mpvDll, "mpv_get_property");
+    fn_terminate_destroy = (pfn_mpv_terminate_destroy)GetProcAddress(g_mpvDll, "mpv_terminate_destroy");
+
+    return fn_create && fn_initialize && fn_command;
+}
+
+// === 状態 ===
+static mpv_handle* g_mpv = nullptr;
+static HWND g_mediaHwnd = nullptr;
+static HWND g_renderHwnd = nullptr;
+static HWND g_controlBar = nullptr;
+static bool g_isLoop = false;
+static bool g_isPlaying = false;
+static bool g_mpvAvailable = false;
+static bool g_mfInitialized = false;
+static UINT_PTR g_updateTimer = 0;
+static double g_volume = 1.0;
+static bool g_muted = false;
+static double g_volumeBeforeMute = 1.0;
+static bool g_seekDragging = false;
+static std::wstring g_currentMediaPath;
+static constexpr int kControlBarH = 40;
+
+// MF フォールバック用
+static ComPtr<IMFMediaSession> g_mfSession;
+static ComPtr<IMFVideoDisplayControl> g_mfVideoDisplay;
+static ComPtr<IMFSimpleAudioVolume> g_mfAudioVolume;
+static double g_mfDuration = 0;
+static bool g_usingMF = false; // true: MF使用中, false: mpv使用中
+
+// === MF コールバック ===
+class MFCallback : public IMFAsyncCallback {
+    LONG refCount_ = 1;
+public:
+    STDMETHOD(QueryInterface)(REFIID iid, void** ppv) override {
+        if (iid == IID_IUnknown || iid == __uuidof(IMFAsyncCallback)) { *ppv = this; AddRef(); return S_OK; }
+        *ppv = nullptr; return E_NOINTERFACE;
+    }
+    STDMETHOD_(ULONG, AddRef)() override { return InterlockedIncrement(&refCount_); }
+    STDMETHOD_(ULONG, Release)() override { LONG r = InterlockedDecrement(&refCount_); if (r == 0) delete this; return r; }
+    STDMETHOD(GetParameters)(DWORD*, DWORD*) override { return E_NOTIMPL; }
+    STDMETHOD(Invoke)(IMFAsyncResult* pResult) override {
+        if (!g_mfSession) return S_OK;
+        ComPtr<IMFMediaEvent> event;
+        if (FAILED(g_mfSession->EndGetEvent(pResult, event.GetAddressOf()))) return S_OK;
+        MediaEventType type; event->GetType(&type);
+
+        if (type == MESessionTopologyStatus) {
+            UINT32 status = 0; event->GetUINT32(MF_EVENT_TOPOLOGY_STATUS, &status);
+            if (status == MF_TOPOSTATUS_READY) {
+                g_mfVideoDisplay.Reset(); g_mfAudioVolume.Reset();
+                ComPtr<IMFGetService> svc;
+                if (SUCCEEDED(g_mfSession->QueryInterface(svc.GetAddressOf()))) {
+                    svc->GetService(MR_VIDEO_RENDER_SERVICE, IID_PPV_ARGS(g_mfVideoDisplay.ReleaseAndGetAddressOf()));
+                    svc->GetService(MR_POLICY_VOLUME_SERVICE, IID_PPV_ARGS(g_mfAudioVolume.ReleaseAndGetAddressOf()));
+                }
+                if (g_mfVideoDisplay && g_renderHwnd) {
+                    g_mfVideoDisplay->SetVideoWindow(g_renderHwnd);
+                    RECT rc; GetClientRect(g_renderHwnd, &rc);
+                    g_mfVideoDisplay->SetVideoPosition(nullptr, &rc);
+                }
+                if (g_mfAudioVolume) g_mfAudioVolume->SetMasterVolume((float)g_volume);
+            }
+        } else if (type == MESessionEnded) {
+            if (g_isLoop) { PROPVARIANT v; PropVariantInit(&v); v.vt = VT_I8; v.hVal.QuadPart = 0; g_mfSession->Start(&GUID_NULL, &v); PropVariantClear(&v); }
+            else { g_isPlaying = false; }
+        }
+        g_mfSession->BeginGetEvent(this, nullptr);
+        return S_OK;
+    }
+};
+static MFCallback* g_mfCallback = nullptr;
+
+static HRESULT CreateMFTopology(const std::wstring& path, IMFTopology** ppTopo) {
+    ComPtr<IMFTopology> topo;
+    HRESULT hr = MFCreateTopology(topo.GetAddressOf());
+    if (FAILED(hr)) return hr;
+
+    ComPtr<IMFSourceResolver> res;
+    hr = MFCreateSourceResolver(res.GetAddressOf());
+    if (FAILED(hr)) return hr;
+
+    MF_OBJECT_TYPE ot; ComPtr<IUnknown> srcU;
+    hr = res->CreateObjectFromURL(path.c_str(), MF_RESOLUTION_MEDIASOURCE, nullptr, &ot, srcU.GetAddressOf());
+    if (FAILED(hr)) return hr;
+
+    ComPtr<IMFMediaSource> src;
+    hr = srcU.As(&src);
+    if (FAILED(hr)) return hr;
+
+    ComPtr<IMFPresentationDescriptor> pd;
+    hr = src->CreatePresentationDescriptor(pd.GetAddressOf());
+    if (FAILED(hr)) return hr;
+    UINT64 d = 0; pd->GetUINT64(MF_PD_DURATION, &d); g_mfDuration = d / 10000000.0;
+    DWORD cnt; pd->GetStreamDescriptorCount(&cnt);
+    for (DWORD i = 0; i < cnt; i++) {
+        BOOL sel; ComPtr<IMFStreamDescriptor> sd; pd->GetStreamDescriptorByIndex(i, &sel, sd.GetAddressOf());
+        if (!sel) continue;
+        ComPtr<IMFMediaTypeHandler> h; sd->GetMediaTypeHandler(h.GetAddressOf());
+        GUID mt; h->GetMajorType(&mt);
+        ComPtr<IMFTopologyNode> sn, on;
+        MFCreateTopologyNode(MF_TOPOLOGY_SOURCESTREAM_NODE, sn.GetAddressOf());
+        sn->SetUnknown(MF_TOPONODE_SOURCE, src.Get()); sn->SetUnknown(MF_TOPONODE_PRESENTATION_DESCRIPTOR, pd.Get()); sn->SetUnknown(MF_TOPONODE_STREAM_DESCRIPTOR, sd.Get());
+        topo->AddNode(sn.Get());
+        MFCreateTopologyNode(MF_TOPOLOGY_OUTPUT_NODE, on.GetAddressOf());
+        ComPtr<IMFActivate> act;
+        if (mt == MFMediaType_Video) MFCreateVideoRendererActivate(g_renderHwnd, act.GetAddressOf());
+        else if (mt == MFMediaType_Audio) MFCreateAudioRendererActivate(act.GetAddressOf());
+        else continue;
+        on->SetObject(act.Get()); topo->AddNode(on.Get()); sn->ConnectOutput(0, on.Get(), 0);
+    }
+    *ppTopo = topo.Detach(); return S_OK;
+}
+
+// === コントロールバー ===
+static std::wstring FormatTime(double s) {
+    if (s < 0 || s != s) s = 0;
+    int h = (int)(s/3600), m = (int)(s/60)%60, sec = (int)s%60;
+    wchar_t b[32];
+    if (h > 0) swprintf_s(b, 32, L"%d:%02d:%02d", h, m, sec);
+    else swprintf_s(b, 32, L"%d:%02d", m, sec);
+    return b;
+}
+
+// 右端から: [音量バー90px][gap2][🔊20px][gap2][🔁30px][gap4][時間110px][シークバー]
+static void GetSeekBarRect(HWND h, RECT& o) { RECT r; GetClientRect(h,&r); o={44,14,r.right-280,26}; }
+static void GetVolumeBarRect(HWND h, RECT& o) { RECT r; GetClientRect(h,&r); o={r.right-98,16,r.right-8,24}; }
+static void GetVolIconRect(HWND h, RECT& o) { RECT r; GetClientRect(h,&r); o={r.right-120,4,r.right-100,36}; }
+static void GetLoopBtnRect(HWND h, RECT& o) { RECT r; GetClientRect(h,&r); o={r.right-154,4,r.right-122,36}; }
+
+// GDI ブラシキャッシュ（MediaInit で作成）
+static HBRUSH g_brDark   = nullptr;
+static HBRUSH g_brGray   = nullptr;
+static HBRUSH g_brBlue   = nullptr;
+static HBRUSH g_brWhite  = nullptr;
+static HBRUSH g_brGreen  = nullptr;
+
+static void PaintControlBar(HWND hwnd, HDC hdc) {
+    RECT rc; GetClientRect(hwnd, &rc);
+    FillRect(hdc, &rc, g_brDark);
+    SetBkMode(hdc, TRANSPARENT); SetTextColor(hdc, RGB(220,220,220));
+    static HFONT hFont = CreateFontW(-13,0,0,0,FW_NORMAL,0,0,0,DEFAULT_CHARSET,0,0,CLEARTYPE_QUALITY,0,L"Segoe UI");
+    HFONT hOld = (HFONT)SelectObject(hdc, hFont);
+
+    double pos = MediaGetPosition(), dur = MediaGetDuration();
+    RECT btn = {8,4,38,36};
+    DrawTextW(hdc, g_isPlaying?L"\u23F8":L"\u25B6",-1,&btn,DT_CENTER|DT_VCENTER|DT_SINGLELINE);
+
+    RECT sr; GetSeekBarRect(hwnd, sr);
+    if (sr.right > sr.left+10) {
+        FillRect(hdc, &sr, g_brGray);
+        if (dur > 0) {
+            int fw = (int)((pos/dur)*(sr.right-sr.left));
+            RECT sf={sr.left,sr.top,sr.left+fw,sr.bottom}; FillRect(hdc,&sf,g_brBlue);
+            int kx=sr.left+fw; RECT kn={kx-5,sr.top-3,kx+5,sr.bottom+3}; FillRect(hdc,&kn,g_brWhite);
+        }
+    }
+    std::wstring ts = FormatTime(pos)+L" / "+FormatTime(dur);
+    RECT tr={sr.right+8,4,sr.right+118,36}; DrawTextW(hdc,ts.c_str(),-1,&tr,DT_LEFT|DT_VCENTER|DT_SINGLELINE);
+
+    // ループボタン（Segoe Fluent Icons、大きめ表示 + オン時は背景色付き）
+    RECT lr; GetLoopBtnRect(hwnd, lr);
+    if (g_isLoop)
+    {
+        // オン時: 青背景 + 白アイコン
+        HBRUSH hBg = CreateSolidBrush(RGB(66, 133, 244));
+        RECT bgRect = { lr.left - 2, lr.top + 4, lr.right + 2, lr.bottom - 4 };
+        FillRect(hdc, &bgRect, hBg);
+        DeleteObject(hBg);
+        SetTextColor(hdc, RGB(255, 255, 255));
+    }
+    else
+    {
+        SetTextColor(hdc, RGB(160, 160, 160));
+    }
+    {
+        static HFONT hLoopFont = CreateFontW(-16, 0, 0, 0, FW_NORMAL, 0, 0, 0,
+            DEFAULT_CHARSET, 0, 0, CLEARTYPE_QUALITY, 0, L"Segoe Fluent Icons");
+        HFONT hPrev = hLoopFont ? (HFONT)SelectObject(hdc, hLoopFont) : nullptr;
+        // U+E8EE = RepeatAll アイコン
+        DrawTextW(hdc, L"\uE8EE", -1, &lr, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+        if (hPrev) SelectObject(hdc, hPrev);
+    }
+    SetTextColor(hdc, RGB(220, 220, 220));
+
+    // 音量アイコン（Segoe Fluent Icons）
+    RECT vi; GetVolIconRect(hwnd, vi);
+    {
+        static HFONT hVolFont = CreateFontW(-16, 0, 0, 0, FW_NORMAL, 0, 0, 0,
+            DEFAULT_CHARSET, 0, 0, CLEARTYPE_QUALITY, 0, L"Segoe Fluent Icons");
+        HFONT hPrev = hVolFont ? (HFONT)SelectObject(hdc, hVolFont) : nullptr;
+        // U+E767 = Volume2 (中音量), U+E74F = Mute
+        DrawTextW(hdc, g_muted ? L"\uE74F" : L"\uE767", -1, &vi, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+        if (hPrev) SelectObject(hdc, hPrev);
+    }
+
+    RECT vr; GetVolumeBarRect(hwnd, vr);
+    FillRect(hdc, &vr, g_brGray);
+    int vfw=(int)(g_volume*(vr.right-vr.left));
+    RECT vf={vr.left,vr.top,vr.left+vfw,vr.bottom}; FillRect(hdc,&vf,g_brGreen);
+    SelectObject(hdc, hOld);
+}
+
+static void OnControlBarClick(HWND hwnd, int x, int y, bool drag) {
+    if (!drag && x < 44) { MediaTogglePlayPause(); InvalidateRect(hwnd,0,TRUE); return; }
+    RECT sr; GetSeekBarRect(hwnd, sr);
+    if (!drag) {
+        RECT lr; GetLoopBtnRect(hwnd, lr);
+        if (x>=lr.left&&x<lr.right) { MediaToggleLoop(); InvalidateRect(hwnd,0,TRUE); return; }
+        // 音量アイコンクリック: ミュートトグル
+        RECT vi; GetVolIconRect(hwnd, vi);
+        if (x>=vi.left&&x<vi.right) {
+            g_muted = !g_muted;
+            if (g_muted) { g_volumeBeforeMute = g_volume; MediaSetVolume(0.0); }
+            else { MediaSetVolume(g_volumeBeforeMute); }
+            InvalidateRect(hwnd,0,TRUE); return;
+        }
+    }
+    if (x>=sr.left && x<=sr.right && sr.right>sr.left) {
+        double r = std::max(0.0, std::min(1.0, (double)(x-sr.left)/(sr.right-sr.left)));
+        double d = MediaGetDuration(); if (d>0) MediaSeek(r*d); InvalidateRect(hwnd,0,TRUE); return;
+    }
+    RECT vr; GetVolumeBarRect(hwnd, vr);
+    if (x>=vr.left-5 && x<=vr.right+5) {
+        double r = std::max(0.0, std::min(1.0, (double)(x-vr.left)/(vr.right-vr.left)));
+        g_muted = false; // 音量バー操作時はミュート解除
+        MediaSetVolume(r); InvalidateRect(hwnd,0,TRUE); return;
+    }
+}
+
+static LRESULT CALLBACK ControlBarWndProc(HWND h, UINT m, WPARAM w, LPARAM l) {
+    switch(m) {
+    case WM_PAINT: { PAINTSTRUCT ps; HDC dc=BeginPaint(h,&ps); PaintControlBar(h,dc); EndPaint(h,&ps); return 0; }
+    case WM_LBUTTONDOWN: SetCapture(h); g_seekDragging=true; OnControlBarClick(h,(short)LOWORD(l),(short)HIWORD(l),false); return 0;
+    case WM_MOUSEMOVE: if(g_seekDragging) OnControlBarClick(h,(short)LOWORD(l),(short)HIWORD(l),true); return 0;
+    case WM_LBUTTONUP: g_seekDragging=false; ReleaseCapture(); return 0;
+    case WM_TIMER: {
+        double pos = MediaGetPosition();
+        double dur = MediaGetDuration();
+        // 常に再描画（位置・時間表示を更新）
+        InvalidateRect(h, nullptr, TRUE);
+        if(g_mfVideoDisplay) g_mfVideoDisplay->RepaintVideo();
+        return 0;
+    }
+    case WM_ERASEBKGND: return 1;
+    }
+    return DefWindowProcW(h,m,w,l);
+}
+
+static bool g_renderClickPending = false;
+static constexpr UINT_PTR kClickTimer = 50;
+
+static LRESULT CALLBACK RenderWndProc(HWND h, UINT m, WPARAM w, LPARAM l) {
+    switch(m) {
+    case WM_LBUTTONUP:
+        // シングルクリック判定（ダブルクリックと区別するため遅延、250msで高速応答）
+        g_renderClickPending = true;
+        SetTimer(h, kClickTimer, 250, nullptr);
+        return 0;
+    case WM_LBUTTONDBLCLK:
+        // ダブルクリック: シングルクリックをキャンセルして全画面
+        g_renderClickPending = false;
+        KillTimer(h, kClickTimer);
+        PostMessageW(g_app.wnd.hwndMain, WM_TOGGLE_FULLSCREEN, 0, 0);
+        return 0;
+    case WM_TIMER:
+        if (w == kClickTimer) {
+            KillTimer(h, kClickTimer);
+            if (g_renderClickPending) {
+                g_renderClickPending = false;
+                MediaTogglePlayPause();
+                if (g_controlBar) InvalidateRect(g_controlBar, 0, TRUE);
+            }
+            return 0;
+        }
+        break;
+    case WM_PAINT: { PAINTSTRUCT ps; BeginPaint(h,&ps); if(g_mfVideoDisplay) g_mfVideoDisplay->RepaintVideo(); else { RECT r; GetClientRect(h,&r); FillRect(ps.hdc,&r,(HBRUSH)GetStockObject(BLACK_BRUSH)); } EndPaint(h,&ps); return 0; }
+    case WM_SIZE: if(g_mfVideoDisplay){ RECT r; GetClientRect(h,&r); g_mfVideoDisplay->SetVideoPosition(nullptr,&r); } return 0;
+    case WM_MOUSEWHEEL: {
+        int delta = GET_WHEEL_DELTA_WPARAM(w);
+        int step = delta > 0 ? -1 : 1;
+        GoToFile(g_app.nav.currentFileIndex + step);
+        return 0;
+    }
+    case WM_ERASEBKGND: return 1;
+    }
+    return DefWindowProcW(h,m,w,l);
+}
+
+static void LayoutMediaPlayer(HWND h) {
+    RECT r; GetClientRect(h,&r); int w=r.right, ht=r.bottom;
+    if(g_renderHwnd) MoveWindow(g_renderHwnd,0,0,w,ht-kControlBarH,TRUE);
+    if(g_controlBar) MoveWindow(g_controlBar,0,ht-kControlBarH,w,kControlBarH,TRUE);
+    if(g_mfVideoDisplay){ RECT vr={0,0,w,ht-kControlBarH}; g_mfVideoDisplay->SetVideoPosition(nullptr,&vr); }
+}
+
+static LRESULT CALLBACK MediaPlayerWndProc(HWND h, UINT m, WPARAM w, LPARAM l) {
+    if(m==WM_SIZE){ LayoutMediaPlayer(h); return 0; }
+    return DefWindowProcW(h,m,w,l);
+}
+
+// === 公開関数 ===
+
+bool MediaInit(HINSTANCE hInst) {
+    g_mpvAvailable = LoadMpvDll();
+    HRESULT hr = MFStartup(MF_VERSION);
+    g_mfInitialized = SUCCEEDED(hr);
+
+    // GDI ブラシ初期化
+    g_brDark  = CreateSolidBrush(RGB(30, 30, 30));
+    g_brGray  = CreateSolidBrush(RGB(80, 80, 80));
+    g_brBlue  = CreateSolidBrush(RGB(66, 133, 244));
+    g_brWhite = CreateSolidBrush(RGB(255, 255, 255));
+    g_brGreen = CreateSolidBrush(RGB(76, 175, 80));
+
+    return g_mpvAvailable || g_mfInitialized;
+}
+
+void MediaShutdown() {
+    MediaStop();
+    if (g_mpv && fn_terminate_destroy) { fn_terminate_destroy(g_mpv); g_mpv = nullptr; }
+    if (g_mpvDll) { FreeLibrary(g_mpvDll); g_mpvDll = nullptr; }
+    if (g_mfCallback) { g_mfCallback->Release(); g_mfCallback = nullptr; }
+    if (g_mfInitialized) { MFShutdown(); g_mfInitialized = false; }
+
+    // GDI ブラシ解放
+    if (g_brDark)  { DeleteObject(g_brDark);  g_brDark = nullptr; }
+    if (g_brGray)  { DeleteObject(g_brGray);  g_brGray = nullptr; }
+    if (g_brBlue)  { DeleteObject(g_brBlue);  g_brBlue = nullptr; }
+    if (g_brWhite) { DeleteObject(g_brWhite); g_brWhite = nullptr; }
+    if (g_brGreen) { DeleteObject(g_brGreen); g_brGreen = nullptr; }
+}
+
+bool RegisterMediaPlayerClass(HINSTANCE hInst) {
+    WNDCLASSEXW wc={}; wc.cbSize=sizeof(wc);
+    wc.hCursor=LoadCursorW(nullptr, IDC_ARROW);
+    wc.lpfnWndProc=MediaPlayerWndProc; wc.hInstance=hInst; wc.hbrBackground=(HBRUSH)GetStockObject(BLACK_BRUSH); wc.lpszClassName=L"KarikariMedia";
+    if(!RegisterClassExW(&wc)) return false;
+    wc.lpfnWndProc=RenderWndProc; wc.lpszClassName=L"KarikariMediaRender"; wc.style=CS_DBLCLKS;
+    if(!RegisterClassExW(&wc)) return false;
+    wc.style=0;
+    wc.lpfnWndProc=ControlBarWndProc; wc.lpszClassName=L"KarikariMediaControl"; wc.hbrBackground=nullptr;
+    return RegisterClassExW(&wc)!=0;
+}
+
+HWND CreateMediaPlayer(HWND parent, HINSTANCE hInst) {
+    g_mediaHwnd = CreateWindowExW(0,L"KarikariMedia",0,WS_CHILD|WS_CLIPCHILDREN,0,0,100,100,parent,0,hInst,0);
+    g_renderHwnd = CreateWindowExW(0,L"KarikariMediaRender",0,WS_CHILD|WS_VISIBLE|WS_CLIPCHILDREN,0,0,100,60,g_mediaHwnd,0,hInst,0);
+    g_controlBar = CreateWindowExW(0,L"KarikariMediaControl",0,WS_CHILD|WS_VISIBLE,0,60,100,kControlBarH,g_mediaHwnd,0,hInst,0);
+    g_app.wnd.hwndMediaPlayer = g_mediaHwnd;
+    return g_mediaHwnd;
+}
+
+// --- mpv でパスをUTF-8に変換 ---
+static std::string WideToUtf8(const std::wstring& w) {
+    int len = WideCharToMultiByte(CP_UTF8,0,w.c_str(),(int)w.size(),0,0,0,0);
+    std::string s(len,0); WideCharToMultiByte(CP_UTF8,0,w.c_str(),(int)w.size(),&s[0],len,0,0);
+    return s;
+}
+
+static bool PlayWithMpv(const std::wstring& path) {
+    if (!g_mpvAvailable) return false;
+
+    // mpv インスタンスを毎回作り直し（ウィンドウ埋め込みのため）
+    if (g_mpv) { fn_terminate_destroy(g_mpv); g_mpv = nullptr; }
+
+    g_mpv = fn_create();
+    if (!g_mpv) return false;
+
+    // レンダリング先ウィンドウ
+    int64_t wid = (int64_t)(intptr_t)g_renderHwnd;
+    fn_set_option(g_mpv, "wid", MPV_FORMAT_INT64, &wid);
+    fn_set_option_string(g_mpv, "keep-open", "yes");
+    fn_set_option_string(g_mpv, "osc", "no");        // OSD コントローラ無効（自前UI）
+    fn_set_option_string(g_mpv, "input-default-bindings", "no");
+    fn_set_option_string(g_mpv, "input-vo-keyboard", "no");
+
+    if (fn_initialize(g_mpv) < 0) { fn_terminate_destroy(g_mpv); g_mpv = nullptr; return false; }
+
+    // 音量設定
+    int64_t vol = (int64_t)(g_volume * 100);
+    fn_set_property(g_mpv, "volume", MPV_FORMAT_INT64, &vol);
+
+    // ループ
+    fn_set_property_string(g_mpv, "loop-file", g_isLoop ? "inf" : "no");
+
+    // 再生
+    std::string u8path = WideToUtf8(path);
+    const char* cmd[] = {"loadfile", u8path.c_str(), NULL};
+    fn_command(g_mpv, cmd);
+
+    g_usingMF = false;
+    return true;
+}
+
+static bool PlayWithMF(const std::wstring& path) {
+    if (!g_mfInitialized) return false;
+
+    if (g_mfSession) { g_mfSession->Stop(); g_mfSession->Close(); g_mfSession.Reset(); }
+    g_mfVideoDisplay.Reset(); g_mfAudioVolume.Reset(); g_mfDuration = 0;
+
+    HRESULT hr = MFCreateMediaSession(nullptr, g_mfSession.ReleaseAndGetAddressOf());
+    if (FAILED(hr)) return false;
+
+    if (!g_mfCallback) g_mfCallback = new MFCallback();
+    g_mfSession->BeginGetEvent(g_mfCallback, nullptr);
+
+    ComPtr<IMFTopology> topo;
+    hr = CreateMFTopology(path, topo.GetAddressOf());
+    if (FAILED(hr)) { g_mfSession.Reset(); return false; }
+
+    hr = g_mfSession->SetTopology(0, topo.Get());
+    if (FAILED(hr)) { g_mfSession.Reset(); return false; }
+
+    PROPVARIANT v; PropVariantInit(&v);
+    g_mfSession->Start(&GUID_NULL, &v);
+    PropVariantClear(&v);
+
+    g_usingMF = true;
+    return true;
+}
+
+void MediaPlay(const std::wstring& path) {
+    // 遅延初期化（初回呼び出し時のみ）
+    static bool initialized = false;
+    if (!initialized)
+    {
+        MediaInit(g_app.hInstance);
+        RegisterMediaPlayerClass(g_app.hInstance);
+        if (!g_app.wnd.hwndMediaPlayer)
+            CreateMediaPlayer(g_app.wnd.hwndMain, g_app.hInstance);
+        initialized = true;
+    }
+
+    MediaStop();
+
+    // mpv を優先、失敗したら MF にフォールバック
+    bool ok = PlayWithMpv(path);
+    if (!ok) ok = PlayWithMF(path);
+
+    if (!ok) {
+        UpdateStatusBar(path, 0, 0, L"再生できません（mpv-2.dll を配置してください）");
+        return;
+    }
+
+    g_isPlaying = true;
+    g_currentMediaPath = path;
+    if (g_controlBar) g_updateTimer = SetTimer(g_controlBar, 1, 250, nullptr);
+}
+
+void MediaStop() {
+    if (g_updateTimer && g_controlBar) { KillTimer(g_controlBar, g_updateTimer); g_updateTimer = 0; }
+
+    if (g_mpv && !g_usingMF) {
+        const char* cmd[] = {"stop", NULL};
+        fn_command(g_mpv, cmd);
+    }
+    if (g_mfSession && g_usingMF) {
+        g_mfSession->Stop(); g_mfSession->Close(); g_mfSession.Reset();
+    }
+    g_mfVideoDisplay.Reset(); g_mfAudioVolume.Reset();
+    g_isPlaying = false; g_mfDuration = 0; g_currentMediaPath.clear();
+    if (g_controlBar) InvalidateRect(g_controlBar, 0, TRUE);
+    if (g_renderHwnd) InvalidateRect(g_renderHwnd, 0, TRUE);
+}
+
+void MediaTogglePlayPause() {
+    if (g_mpv && !g_usingMF) {
+        int pause = g_isPlaying ? 1 : 0;
+        fn_set_property(g_mpv, "pause", MPV_FORMAT_FLAG, &pause);
+        g_isPlaying = !g_isPlaying;
+    } else if (g_mfSession && g_usingMF) {
+        if (g_isPlaying) { g_mfSession->Pause(); g_isPlaying = false; }
+        else { PROPVARIANT v; PropVariantInit(&v); g_mfSession->Start(&GUID_NULL,&v); PropVariantClear(&v); g_isPlaying = true; }
+    }
+    if (g_controlBar) InvalidateRect(g_controlBar, 0, TRUE);
+}
+
+void MediaSeek(double seconds) {
+    if (g_mpv && !g_usingMF) {
+        char buf[64]; snprintf(buf, 64, "%.3f", seconds);
+        const char* cmd[] = {"seek", buf, "absolute", NULL};
+        fn_command(g_mpv, cmd);
+    } else if (g_mfSession && g_usingMF) {
+        PROPVARIANT v; PropVariantInit(&v); v.vt=VT_I8; v.hVal.QuadPart=(LONGLONG)(seconds*10000000.0);
+        g_mfSession->Start(&GUID_NULL,&v); PropVariantClear(&v);
+        if (!g_isPlaying) g_isPlaying = true;
+    }
+}
+
+void MediaSetVolume(double vol) {
+    g_volume = std::max(0.0, std::min(1.0, vol));
+    if (g_mpv && !g_usingMF) {
+        int64_t v = (int64_t)(g_volume * 100);
+        fn_set_property(g_mpv, "volume", MPV_FORMAT_INT64, &v);
+    }
+    if (g_mfAudioVolume && g_usingMF)
+        g_mfAudioVolume->SetMasterVolume((float)g_volume);
+}
+
+void MediaSetSpeed(double speed) {
+    if (g_mpv && !g_usingMF) {
+        fn_set_property(g_mpv, "speed", MPV_FORMAT_DOUBLE, &speed);
+    } else if (g_mfSession && g_usingMF) {
+        ComPtr<IMFGetService> svc;
+        if (SUCCEEDED(g_mfSession->QueryInterface(svc.GetAddressOf()))) {
+            ComPtr<IMFRateControl> rate;
+            if (SUCCEEDED(svc->GetService(MF_RATE_CONTROL_SERVICE, IID_PPV_ARGS(rate.GetAddressOf()))))
+                rate->SetRate(FALSE, (float)speed);
+        }
+    }
+}
+
+void MediaToggleLoop() {
+    g_isLoop = !g_isLoop;
+    if (g_mpv && !g_usingMF)
+        fn_set_property_string(g_mpv, "loop-file", g_isLoop ? "inf" : "no");
+}
+
+double MediaGetPosition() {
+    if (g_mpv && !g_usingMF) {
+        double pos = 0;
+        if (fn_get_property(g_mpv, "time-pos", MPV_FORMAT_DOUBLE, &pos) >= 0) return pos;
+        return 0;
+    }
+    if (g_mfSession && g_usingMF) {
+        ComPtr<IMFClock> clk; if (FAILED(g_mfSession->GetClock(clk.GetAddressOf()))) return 0;
+        ComPtr<IMFPresentationClock> pc; if (FAILED(clk.As(&pc))) return 0;
+        MFTIME t=0; pc->GetTime(&t); return t/10000000.0;
+    }
+    return 0;
+}
+
+double MediaGetDuration() {
+    if (g_mpv && !g_usingMF) {
+        double dur = 0;
+        if (fn_get_property(g_mpv, "duration", MPV_FORMAT_DOUBLE, &dur) >= 0) return dur;
+        return 0;
+    }
+    return g_mfDuration;
+}
+
+bool MediaIsPlaying() { return g_isPlaying; }

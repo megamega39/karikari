@@ -1,0 +1,38 @@
+# CMake およびビルド生成物
+build/
+out/
+bin/
+lib/
+CMakeCache.txt
+CMakeFiles/
+CMakeScripts/
+Makefile
+*.cmake
+compile_commands.json
+
+# IDE (Visual Studio, VS Code 等)
+.vs/
+.vscode/
+.idea/
+*.sln
+*.vcxproj
+*.vcxproj.*
+*.suo
+*.user
+
+# ログファイル
+*.log
+hover_debug.log
+thumb_debug.log
+
+# 一時ファイルやオブジェクトファイル
+*.obj
+*.exe
+*.pdb
+*.ilk
+*.idb
+*.tlog
+
+# その他特定環境のファイル
+.claude/
+Users
