@@ -53,8 +53,8 @@ target_precompile_headers(karikari PRIVATE src/app.h)
 # Unicode
 target_compile_definitions(karikari PRIVATE UNICODE _UNICODE)
 
-# UTF-8 source
-target_compile_options(karikari PRIVATE /utf-8)
+# UTF-8 source + 警告レベル + 例外ハンドリング
+target_compile_options(karikari PRIVATE /utf-8 /W4 /EHsc)
 
 # Release 最適化: LTO（リンク時最適化）
 if(MSVC)

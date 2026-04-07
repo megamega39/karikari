@@ -228,3 +228,24 @@
 - **#1** MemoryOutStream の reserve 追加: ExtractToMemory / ExtractBatchToMemory で展開先バッファに entryList の既知サイズで事前 reserve。再アロケーション削減
 - **#2** CreateFileW に FILE_FLAG_SEQUENTIAL_SCAN 追加: GetCachedArchive の tryOpen ラムダと IsRar5File の両方。OSのリードアヘッド最適化を有効化
 - **#3** エントリディスクキャッシュを複数書庫対応: GetEntryCachePath が書庫パスのハッシュ値でファイル名を決定（arc_cache_{hash}.dat）。従来は archive_entries.cache 1ファイルに最後の1書庫分のみだったため、複数書庫を切り替えるとキャッシュミスが多発していた
+
+## 2026-04-07: 見開き表示の非同期デコード改善
+- **問題**: ShouldShowSpreadがtrueでも2枚目がキャッシュにない場合、1枚目のみ単独表示されていた
+- **解決**: ViewerLoadSpreadAsync を新設。2枚ともスレッドプールで非同期デコードし、完了後にUIスレッドで見開き表示
+- **変更ファイル**: app.h, viewer.h, viewer.cpp, nav.cpp, window.cpp
+- **設計判断**:
+  - ViewerLoadImageAsync と同じパターン（g_asyncDecodeGeneration による世代管理、WM_ASYNC_SPREAD_DONE メッセージ）
+  - 書庫内・通常ファイル両方に対応。書庫内はStreamCache経由でExtractToMemory
+  - 片方だけデコード成功した場合は単独表示にフォールバック
+- **追加改善**: ShouldShowSpread の表紙単独表示を settings.spreadFirstSingle 設定に依存するよう変更（従来はindex==0で無条件単独）
+
+## 2026-04-07: プリフェッチ動的調整 + 書庫バッチ展開非同期化
+- **プリフェッチ数の動的調整** (nav.cpp, prefetch.cpp):
+  - GoToFile() でページ送り間隔を GetTickCount64() で計測。200ms未満なら g_scrollSpeed=1（高速）
+  - PrefetchStart() で高速スクロール時にプリフェッチ数を2倍に増加
+  - 設計判断: 高速ページ送り時はキャッシュ消費が激しいため先読み枚数を増やして追いつく
+- **書庫バッチ展開の非同期化** (prefetch.cpp):
+  - ExtractBatchToMemory がUIスレッドで同期実行されていた問題を解消
+  - バッチ展開+デコードを1つのスレッドプールワーカーにまとめてバックグラウンド実行
+  - BatchPrefetchCtx 構造体でパスをUIスレッドでコピーし、ワーカーに渡す（viewableFiles への非同期アクセス回避）
+  - 世代番号チェックで古いワーカーを早期中断

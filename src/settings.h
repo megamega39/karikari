@@ -15,7 +15,7 @@ struct AppSettings {
     int prefetchCount = 8;
     std::wstring language = L"ja";
     bool wrapNavigation = true;
-    bool spreadFirstSingle = false;   // 見開き時最初のページを単独表示
+    bool spreadFirstSingle = true;    // 見開き時最初のページを単独表示（leeyez_kai準拠）
     bool recursiveLoad = false;       // サブフォルダ再帰読み込み
     bool autoPlayMedia = true;        // 動画自動再生
     float spreadThreshold = 1.0f;     // 見開き判定閾値

@@ -8,6 +8,7 @@
 #include "window.h"
 #include "viewer_toolbar.h"
 #include "archive.h"
+#include "settings.h"
 #include <mutex>
 #include <atomic>
 
@@ -707,6 +708,109 @@ void ViewerLoadImageAsync(const std::wstring& path)
     // work が null の場合、result のデストラクタが自動的に delete する
 }
 
+void ViewerLoadSpreadAsync(const std::wstring& path1, const std::wstring& path2)
+{
+    // キャッシュヒット時は即座に見開き表示
+    auto cached1 = CacheGet(path1);
+    auto cached2 = CacheGet(path2);
+    if (cached1 && cached2) {
+        ViewerStopAnimation();
+        g_app.viewer.bitmap = cached1;
+        g_app.viewer.bitmap2 = cached2;
+        g_app.viewer.isSpreadActive = true;
+        g_app.viewer.rotation = 0;
+        g_app.nav.currentPath = path1;
+        ViewerResetView();
+        InvalidateRect(g_app.wnd.hwndViewer, nullptr, FALSE);
+        return;
+    }
+
+    // 非同期デコード
+    int generation = ++g_asyncDecodeGeneration;
+
+    struct SpreadDecodeCtx {
+        int generation;
+        std::wstring path1, path2;
+    };
+    auto* ctx = new SpreadDecodeCtx{ generation, path1, path2 };
+
+    PTP_WORK work = CreateThreadpoolWork([](PTP_CALLBACK_INSTANCE, PVOID param, PTP_WORK work) {
+        auto* c = (SpreadDecodeCtx*)param;
+        std::unique_ptr<SpreadDecodeCtx> ctx(c);
+
+        if (ctx->generation != g_asyncDecodeGeneration.load()) { CloseThreadpoolWork(work); return; }
+
+        IWICImagingFactory* factory = GetAsyncWicFactory();
+        if (!factory) { CloseThreadpoolWork(work); return; }
+
+        // 1枚目デコード
+        ComPtr<IWICBitmap> wic1;
+        {
+            std::wstring arcPath, entryPath;
+            if (SplitArchivePath(ctx->path1, arcPath, entryPath)) {
+                auto cached = StreamCacheGet(ctx->path1);
+                if (!cached) {
+                    std::vector<BYTE> buf;
+                    if (ExtractToMemory(arcPath, entryPath, buf)) {
+                        StreamCachePut(ctx->path1, std::move(buf));
+                        cached = StreamCacheGet(ctx->path1);
+                    }
+                }
+                if (cached)
+                    DecodeMemoryToWicBitmap(cached->data(), cached->size(), factory, wic1.GetAddressOf());
+            } else {
+                DecodeToWicBitmap(ctx->path1, factory, wic1.GetAddressOf());
+            }
+        }
+
+        if (ctx->generation != g_asyncDecodeGeneration.load()) { CloseThreadpoolWork(work); return; }
+
+        // 2枚目デコード
+        ComPtr<IWICBitmap> wic2;
+        {
+            std::wstring arcPath, entryPath;
+            if (SplitArchivePath(ctx->path2, arcPath, entryPath)) {
+                auto cached = StreamCacheGet(ctx->path2);
+                if (!cached) {
+                    std::vector<BYTE> buf;
+                    if (ExtractToMemory(arcPath, entryPath, buf)) {
+                        StreamCachePut(ctx->path2, std::move(buf));
+                        cached = StreamCacheGet(ctx->path2);
+                    }
+                }
+                if (cached)
+                    DecodeMemoryToWicBitmap(cached->data(), cached->size(), factory, wic2.GetAddressOf());
+            } else {
+                DecodeToWicBitmap(ctx->path2, factory, wic2.GetAddressOf());
+            }
+        }
+
+        if (ctx->generation != g_asyncDecodeGeneration.load()) { CloseThreadpoolWork(work); return; }
+
+        // 画像サイズキャッシュ
+        UINT w, h;
+        if (wic1 && SUCCEEDED(wic1->GetSize(&w, &h)) && w > 0 && h > 0)
+            CacheImageSize(ctx->path1, w, h);
+        if (wic2 && SUCCEEDED(wic2->GetSize(&w, &h)) && w > 0 && h > 0)
+            CacheImageSize(ctx->path2, w, h);
+
+        auto* msg = new AsyncSpreadDoneMsg{
+            wic1 ? wic1.Detach() : nullptr,
+            wic2 ? wic2.Detach() : nullptr,
+            ctx->path1, ctx->path2, ctx->generation
+        };
+        if (!PostMessageW(g_app.wnd.hwndMain, WM_ASYNC_SPREAD_DONE, 0, (LPARAM)msg)) {
+            if (msg->wicBmp1) msg->wicBmp1->Release();
+            if (msg->wicBmp2) msg->wicBmp2->Release();
+            delete msg;
+        }
+        CloseThreadpoolWork(work);
+    }, ctx, nullptr);
+
+    if (work) SubmitThreadpoolWork(work);
+    else delete ctx;
+}
+
 // 単一画像をキャッシュ付きで取得するヘルパー
 static bool LoadBitmapCached(const std::wstring& path, ComPtr<ID2D1Bitmap>& out)
 {
@@ -811,14 +915,17 @@ void CacheImageSize(const std::wstring& path, UINT w, UINT h)
     g_sizeCache[path] = { w, h };
 }
 
-// 縦向き判定（w/h <= 1.0 なら縦向き）
+// 縦向き判定（w/h <= spreadThreshold なら縦向き）
 // cacheOnly=true: キャッシュミス時はtrue（縦向き扱い=見開き可能）を返す
-static bool IsPortrait(const std::wstring& path, bool cacheOnly = false)
+// sizeKnown: サイズが実際に取得できたかどうかを返す（nullptrなら無視）
+static bool IsPortrait(const std::wstring& path, bool cacheOnly = false, bool* sizeKnown = nullptr)
 {
     UINT w = 0, h = 0;
-    if (!GetImageSize(path, w, h, cacheOnly)) return true; // 取得失敗は縦向き扱い
-    if (w == 0 || h == 0) return true;
-    return (float)w / h <= 1.0f;
+    bool got = GetImageSize(path, w, h, cacheOnly);
+    if (sizeKnown) *sizeKnown = got && w > 0 && h > 0;
+    if (!got || w == 0 || h == 0) return true; // 取得失敗は縦向き扱い
+    const auto& s = GetCachedSettings();
+    return (float)w / h <= s.spreadThreshold;
 }
 
 // 見開き判定結果キャッシュ
@@ -848,7 +955,8 @@ bool ShouldShowSpread(int index)
 
     // 自動モード
     int total = (int)g_app.nav.viewableFiles.size();
-    if (index == 0) return false;         // 表紙は単独
+    const auto& s = GetCachedSettings();
+    if (index == 0 && s.spreadFirstSingle) return false;  // 表紙は単独（設定依存）
     if (index + 1 >= total) return false; // 最後のページは単独
 
     const auto& currentPath = g_app.nav.viewableFiles[index];
@@ -857,14 +965,20 @@ bool ShouldShowSpread(int index)
     // メディアファイルは見開き不可
     if (IsMediaFile(currentPath) || IsMediaFile(nextPath)) return false;
 
-    // 現在のページが横向き → 単独（キャッシュオンリーでUIブロック回避）
-    if (!IsPortrait(currentPath, true)) { g_spreadCache[index] = false; return false; }
+    // 現在のページの縦横比チェック（cacheOnly: UIブロック回避）
+    bool size1Known = false, size2Known = false;
+    bool cur = IsPortrait(currentPath, true, &size1Known);
+    bool nxt = IsPortrait(nextPath, true, &size2Known);
 
-    // 次のページが横向き → 単独（キャッシュオンリーでUIブロック回避）
-    if (!IsPortrait(nextPath, true)) { g_spreadCache[index] = false; return false; }
+    // 横向きと確定した画像がある → 単独（キャッシュに記録）
+    if (size1Known && !cur) { g_spreadCache[index] = false; return false; }
+    if (size2Known && !nxt) { g_spreadCache[index] = false; return false; }
 
-    // 両方縦向き → 見開き
-    g_spreadCache[index] = true;
+    // 両方のサイズが判明して両方縦向き → 見開き（キャッシュに記録）
+    if (size1Known && size2Known) { g_spreadCache[index] = true; return true; }
+
+    // サイズ不明あり → 見開きを試行するがキャッシュには入れない
+    // （非同期デコード後にサイズが判明したら再判定される）
     return true;
 }
 

@@ -1292,6 +1292,49 @@ static LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
         return 0;
     }
 
+    case WM_ASYNC_SPREAD_DONE:
+    {
+        auto* msg = reinterpret_cast<AsyncSpreadDoneMsg*>(lParam);
+        if (!msg) return 0;
+        if (msg->generation != GetAsyncDecodeGeneration()) {
+            if (msg->wicBmp1) msg->wicBmp1->Release();
+            if (msg->wicBmp2) msg->wicBmp2->Release();
+            delete msg;
+            return 0;
+        }
+        if (g_app.viewer.deviceContext) {
+            ComPtr<ID2D1Bitmap> bmp1, bmp2;
+            bool ok1 = msg->wicBmp1 && SUCCEEDED(WicBitmapToD2D(msg->wicBmp1, g_app.viewer.deviceContext.Get(), bmp1.GetAddressOf()));
+            bool ok2 = msg->wicBmp2 && SUCCEEDED(WicBitmapToD2D(msg->wicBmp2, g_app.viewer.deviceContext.Get(), bmp2.GetAddressOf()));
+            if (ok1) CachePut(msg->path1, bmp1);
+            if (ok2) CachePut(msg->path2, bmp2);
+            if (ok1 && ok2) {
+                ViewerStopAnimation();
+                g_app.viewer.bitmap = bmp1;
+                g_app.viewer.bitmap2 = bmp2;
+                g_app.viewer.isSpreadActive = true;
+                g_app.viewer.rotation = 0;
+                g_app.nav.currentPath = msg->path1;
+                g_app.viewer.zoom = 1.0f;
+                g_app.viewer.scrollX = 0.0f;
+                g_app.viewer.scrollY = 0.0f;
+                InvalidateRect(g_app.wnd.hwndViewer, nullptr, FALSE);
+                // ステータスバー更新
+                auto size = bmp1->GetSize();
+                int total = (int)g_app.nav.viewableFiles.size();
+                wchar_t pageInfo[64];
+                swprintf_s(pageInfo, _countof(pageInfo), L"%d / %d", g_app.nav.currentFileIndex + 1, total);
+                UpdateStatusBar(msg->path1, (int)size.width, (int)size.height, pageInfo, 0);
+            } else if (ok1) {
+                ViewerSetBitmap(bmp1, msg->path1);
+            }
+        }
+        if (msg->wicBmp1) msg->wicBmp1->Release();
+        if (msg->wicBmp2) msg->wicBmp2->Release();
+        delete msg;
+        return 0;
+    }
+
     case WM_HOVER_PREVIEW_DONE:
         HandleHoverPreviewDone(hwnd, wParam, lParam);
         return 0;

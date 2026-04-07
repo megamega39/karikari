@@ -22,6 +22,10 @@
 
 static std::atomic<int> g_archiveLoadGeneration{0};
 
+// スクロール速度判定用
+static ULONGLONG g_lastGoToTime = 0;
+int g_scrollSpeed = 0; // 0=通常, 1=高速 (prefetch.cppから参照)
+
 // ナビゲーション設定キャッシュ（ファイルスコープ）
 static bool g_navWrap = true;
 static bool g_navWrapLoaded = false;
@@ -262,6 +266,9 @@ void NavigateTo(const std::wstring& path, NavigateOptions opts)
         auto* resultPtr = new ArchiveLoadResult{ gen, path, {}, {}, {}, {}, capturedOpts };
 
         PTP_WORK work = CreateThreadpoolWork([](PTP_CALLBACK_INSTANCE, PVOID ctx, PTP_WORK work) {
+            // ワーカースレッドでCOM初期化（7z.dll使用のため必須）
+            struct ComGuard { ComGuard() { CoInitializeEx(nullptr, COINIT_MULTITHREADED); } ~ComGuard() { CoUninitialize(); } } comGuard;
+
             std::unique_ptr<ArchiveLoadResult> result(static_cast<ArchiveLoadResult*>(ctx));
 
             // 世代チェック
@@ -482,6 +489,10 @@ static void DisplayImageFile(int index, const std::wstring& path)
 
     if (ShouldShowSpread(index))
     {
+        // 見開き判定がtrueなら即座にisSpreadActiveをセット
+        // （非同期デコード完了前でもGetPagesPerViewが2を返すようにする）
+        g_app.viewer.isSpreadActive = true;
+
         std::wstring path2 = g_app.nav.viewableFiles[index + 1];
 
         // 書庫内の見開き
@@ -491,46 +502,38 @@ static void DisplayImageFile(int index, const std::wstring& path)
 
         if (isArc1 && isArc2)
         {
-            // 2枚とも書庫内 → 1枚目即表示、2枚目はキャッシュヒット時のみ見開き
-            ViewerStopAnimation();
-            g_app.viewer.bitmap.Reset();
-            g_app.viewer.bitmap2.Reset();
-            g_app.viewer.isSpreadActive = false;
-            g_app.viewer.rotation = 0;
-
-            bool ok1 = LoadArchiveBitmap(arcPath1, entry1, g_app.viewer.bitmap);
-
-            // 2枚目: キャッシュヒットなら即見開き、ミスならプリフェッチに任せて単独表示
+            // 2枚とも書庫内 → キャッシュヒットなら即見開き、ミスなら非同期デコード
+            auto cached1 = CacheGet(path);
             std::wstring key2 = arcPath2 + L"!" + entry2;
             auto cached2 = CacheGet(key2);
-            if (ok1 && cached2)
+            if (cached1 && cached2)
             {
+                ViewerStopAnimation();
+                g_app.viewer.bitmap = cached1;
                 g_app.viewer.bitmap2 = cached2;
                 g_app.viewer.isSpreadActive = true;
+                g_app.viewer.rotation = 0;
                 g_app.nav.currentPath = path;
+                ViewerResetView();
+                InvalidateRect(g_app.wnd.hwndViewer, nullptr, FALSE);
             }
-            else if (ok1)
+            else
             {
-                g_app.nav.currentPath = path;
-                // 2枚目はプリフェッチが後からキャッシュに入れる
+                ViewerLoadSpreadAsync(path, path2);
             }
-
-            ViewerResetView();
-            InvalidateRect(g_app.wnd.hwndViewer, nullptr, FALSE);
         }
         else
         {
-            // 通常ファイル見開き: 2枚目キャッシュヒットなら見開き、ミスなら単独
-            ComPtr<ID2D1Bitmap> bmp2;
+            // 通常ファイル見開き: 両方キャッシュヒットなら即見開き、ミスなら非同期デコード
+            auto cached1 = CacheGet(path);
             auto cached2 = CacheGet(path2);
-            if (cached2)
+            if (cached1 && cached2)
             {
                 ViewerShowSpread(path, path2);
             }
             else
             {
-                // 1枚目のみ表示（2枚目はプリフェッチに任せる）- 非同期デコード
-                ViewerLoadImageAsync(path);
+                ViewerLoadSpreadAsync(path, path2);
             }
         }
     }
@@ -600,6 +603,14 @@ void GoToFile(int index)
     if (total == 0) return;
     index = ResolveIndex(index, total);
     if (index < 0) return;
+
+    // スクロール速度判定
+    ULONGLONG now = GetTickCount64();
+    if (g_lastGoToTime > 0 && (now - g_lastGoToTime) < 200)
+        g_scrollSpeed = 1;
+    else
+        g_scrollSpeed = 0;
+    g_lastGoToTime = now;
 
     int prevIndex = g_app.nav.currentFileIndex;
     g_app.nav.lastNavDirection = (index >= prevIndex) ? 1 : -1;

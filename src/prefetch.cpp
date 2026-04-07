@@ -132,6 +132,8 @@ void PrefetchResetSettings()
     g_prefetchSettingsChanged = true;
 }
 
+extern int g_scrollSpeed; // nav.cppで定義
+
 void PrefetchStart(int currentIndex, int direction)
 {
     // 世代を進める（前のワーカーはそのまま走り続けるがUI通知はしない）
@@ -150,6 +152,7 @@ void PrefetchStart(int currentIndex, int direction)
     }
     int count = cachedCount;
     if (g_app.nav.inArchiveMode) count = count * 3 / 2;
+    if (g_scrollSpeed > 0) count = count * 2; // 高速スクロール時は2倍
     int fwdCount = std::max(1, (count * 3 + 3) / 4);
     int revCount = count - fwdCount;
 
@@ -199,36 +202,51 @@ void PrefetchStart(int currentIndex, int direction)
         fileIndices.push_back(idx);
     }
 
-    // 書庫バッチ展開（1回のロックで全エントリ展開）
-    std::vector<BatchExtractResult> batchResults;
-    if (!batchEntries.empty())
-    {
-        ExtractBatchToMemory(batchArcPath, batchEntries, batchResults);
-        for (size_t i = 0; i < batchResults.size() && i < batchIndices.size(); i++)
-        {
-            if (batchResults[i].ok && !batchResults[i].buffer.empty())
-            {
-                std::wstring key = g_app.nav.viewableFiles[batchIndices[i]];
-                StreamCachePut(key, std::move(batchResults[i].buffer));
+    // 書庫バッチ展開+デコードをバックグラウンドで実行
+    if (!batchEntries.empty()) {
+        // ワーカーに渡すコンテキスト
+        struct BatchPrefetchCtx {
+            int generation;
+            std::wstring arcPath;
+            std::vector<std::wstring> entries;
+            std::vector<int> indices;
+            std::vector<std::wstring> paths; // viewableFilesのフルパスコピー
+        };
+
+        // パスをUIスレッドでコピー
+        std::vector<std::wstring> batchPaths;
+        for (int idx : batchIndices)
+            batchPaths.push_back(g_app.nav.viewableFiles[idx]);
+
+        auto* ctx = new BatchPrefetchCtx{ gen, batchArcPath,
+                                           std::move(batchEntries),
+                                           std::move(batchIndices),
+                                           std::move(batchPaths) };
+
+        PTP_WORK work = CreateThreadpoolWork([](PTP_CALLBACK_INSTANCE, PVOID p, PTP_WORK) {
+            std::unique_ptr<BatchPrefetchCtx> ctx(static_cast<BatchPrefetchCtx*>(p));
+
+            if (ctx->generation != g_prefetchGeneration.load()) return;
+
+            // バッチ展開（バックグラウンド）
+            std::vector<BatchExtractResult> results;
+            ExtractBatchToMemory(ctx->arcPath, ctx->entries, results);
+
+            // StreamCacheに格納
+            for (size_t i = 0; i < results.size() && i < ctx->paths.size(); i++) {
+                if (results[i].ok && !results[i].buffer.empty())
+                    StreamCachePut(ctx->paths[i], std::move(results[i].buffer));
             }
-        }
-    }
 
-    // 書庫内画像: ストリームキャッシュからデコード
-    for (size_t i = 0; i < batchIndices.size(); i++)
-    {
-        if (gen != g_prefetchGeneration.load()) break;
-        int idx = batchIndices[i];
-        std::wstring path = g_app.nav.viewableFiles[idx];
+            // 各エントリを順次デコード（StreamCacheヒット→デコードのみ）
+            for (size_t i = 0; i < ctx->indices.size(); i++) {
+                if (ctx->generation != g_prefetchGeneration.load()) break;
+                PrefetchWorker(ctx->indices[i], ctx->paths[i], ctx->generation);
+            }
+        }, ctx, nullptr);
 
-        auto* item = new WorkItem{ idx, path, gen };
-        PTP_WORK work = CreateThreadpoolWork([](PTP_CALLBACK_INSTANCE, PVOID ctx, PTP_WORK) {
-            auto* wi = (WorkItem*)ctx;
-            PrefetchWorker(wi->idx, wi->path, wi->generation);
-            delete wi;
-        }, item, nullptr);
         if (work) SubmitThreadpoolWork(work);
-        else delete item;
+        else delete ctx;
     }
 
     // 通常ファイル

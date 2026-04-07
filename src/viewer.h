@@ -30,3 +30,13 @@ struct AsyncDecodeDoneMsg {
     std::wstring path;
     int generation;
 };
+
+struct AsyncSpreadDoneMsg {
+    IWICBitmap* wicBmp1;
+    IWICBitmap* wicBmp2;
+    std::wstring path1;
+    std::wstring path2;
+    int generation;
+};
+
+void ViewerLoadSpreadAsync(const std::wstring& path1, const std::wstring& path2);
