@@ -1226,11 +1226,12 @@ void ViewerShowSpread(const std::wstring& path1, const std::wstring& path2)
 
 // 画像サイズキャッシュ（プリフェッチスレッドからも書き込まれるため mutex 保護）
 static std::mutex g_sizeCacheMutex;
-static std::unordered_map<std::wstring, std::pair<UINT, UINT>> g_sizeCache;
+struct ImageSizeInfo { UINT w, h, frameCount; };
+static std::unordered_map<std::wstring, ImageSizeInfo> g_sizeCache;
 
 // WIC で画像サイズだけ高速取得（キャッシュ付き）
 // cacheOnly=true: キャッシュミス時にWICデコーダを開かずfalseを返す（UIブロック回避）
-static bool GetImageSize(const std::wstring& path, UINT& w, UINT& h, bool cacheOnly = false)
+static bool GetImageSize(const std::wstring& path, UINT& w, UINT& h, bool cacheOnly = false, UINT* outFrameCount = nullptr)
 {
     // キャッシュヒット（mutex保護）
     {
@@ -1238,8 +1239,9 @@ static bool GetImageSize(const std::wstring& path, UINT& w, UINT& h, bool cacheO
         auto it = g_sizeCache.find(path);
         if (it != g_sizeCache.end())
         {
-            w = it->second.first;
-            h = it->second.second;
+            w = it->second.w;
+            h = it->second.h;
+            if (outFrameCount) *outFrameCount = it->second.frameCount;
             return true;
         }
     }
@@ -1250,9 +1252,29 @@ static bool GetImageSize(const std::wstring& path, UINT& w, UINT& h, bool cacheO
     if (!g_app.viewer.wicFactory) return false;
 
     ComPtr<IWICBitmapDecoder> decoder;
-    HRESULT hr = g_app.viewer.wicFactory->CreateDecoderFromFilename(
-        path.c_str(), nullptr, GENERIC_READ,
-        WICDecodeMetadataCacheOnDemand, decoder.GetAddressOf());
+    HRESULT hr;
+
+    // 書庫内パスの場合: StreamCacheからメモリデコードでサイズ取得
+    std::wstring arcPath, entryPath;
+    if (SplitArchivePath(path, arcPath, entryPath))
+    {
+        auto cached = StreamCacheGet(path);
+        if (!cached) return false; // StreamCacheになければ諦める（プリフェッチ待ち）
+
+        ComPtr<IWICStream> stream;
+        hr = g_app.viewer.wicFactory->CreateStream(stream.GetAddressOf());
+        if (FAILED(hr)) return false;
+        hr = stream->InitializeFromMemory(const_cast<BYTE*>(cached->data()), (DWORD)cached->size());
+        if (FAILED(hr)) return false;
+        hr = g_app.viewer.wicFactory->CreateDecoderFromStream(
+            stream.Get(), nullptr, WICDecodeMetadataCacheOnDemand, decoder.GetAddressOf());
+    }
+    else
+    {
+        hr = g_app.viewer.wicFactory->CreateDecoderFromFilename(
+            path.c_str(), nullptr, GENERIC_READ,
+            WICDecodeMetadataCacheOnDemand, decoder.GetAddressOf());
+    }
     if (FAILED(hr)) return false;
 
     ComPtr<IWICBitmapFrameDecode> frame;
@@ -1261,7 +1283,11 @@ static bool GetImageSize(const std::wstring& path, UINT& w, UINT& h, bool cacheO
 
     if (FAILED(frame->GetSize(&w, &h))) return false;
 
-    // キャッシュに保存（mutex保護、1000超過時は半分削除）
+    UINT frameCount = 0;
+    decoder->GetFrameCount(&frameCount);
+    if (outFrameCount) *outFrameCount = frameCount;
+
+    // キャッシュに保存（mutex保護、超過時は半分削除）
     {
         std::lock_guard<std::mutex> lock(g_sizeCacheMutex);
         if (g_sizeCache.size() > 3000) {
@@ -1269,7 +1295,7 @@ static bool GetImageSize(const std::wstring& path, UINT& w, UINT& h, bool cacheO
             for (int i = 0; i < 1500 && it != g_sizeCache.end(); i++)
                 it = g_sizeCache.erase(it);
         }
-        g_sizeCache[path] = { w, h };
+        g_sizeCache[path] = { w, h, frameCount };
     }
     return true;
 }
@@ -1283,7 +1309,11 @@ void CacheImageSize(const std::wstring& path, UINT w, UINT h)
         for (int i = 0; i < 1500 && it != g_sizeCache.end(); i++)
             it = g_sizeCache.erase(it);
     }
-    g_sizeCache[path] = { w, h };
+    // 既存エントリのframeCountを保持（プリフェッチではframeCount不明）
+    // デフォルト0 = 未取得。IsPortraitでframeCount > 1のみ判定するので0は影響なし
+    auto existing = g_sizeCache.find(path);
+    UINT fc = (existing != g_sizeCache.end()) ? existing->second.frameCount : 0;
+    g_sizeCache[path] = { w, h, fc };
 }
 
 // 縦向き判定（w/h <= spreadThreshold なら縦向き）
@@ -1291,10 +1321,11 @@ void CacheImageSize(const std::wstring& path, UINT w, UINT h)
 // sizeKnown: サイズが実際に取得できたかどうかを返す（nullptrなら無視）
 static bool IsPortrait(const std::wstring& path, bool cacheOnly = false, bool* sizeKnown = nullptr)
 {
-    UINT w = 0, h = 0;
-    bool got = GetImageSize(path, w, h, cacheOnly);
+    UINT w = 0, h = 0, frameCount = 0;
+    bool got = GetImageSize(path, w, h, cacheOnly, &frameCount);
     if (sizeKnown) *sizeKnown = got && w > 0 && h > 0;
     if (!got || w == 0 || h == 0) return true; // 取得失敗は縦向き扱い
+    if (frameCount > 1) return false; // アニメーションは見開き不可（横向き扱い）
     const auto& s = GetCachedSettings();
     return (float)w / h <= s.spreadThreshold;
 }

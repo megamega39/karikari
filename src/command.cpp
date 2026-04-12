@@ -13,6 +13,7 @@
 #include "archive.h"
 #include "media.h"
 #include "window.h"
+#include "help.h"
 #include <shellapi.h>
 #include <shlwapi.h>
 
@@ -146,8 +147,8 @@ void HandleCommand(HWND hwnd, UINT cmd)
 
     // ビューアー - ページ送り
     case IDM_VIEW_FIRST: GoToFile(0); break;
-    case IDM_VIEW_PREV:  GoToFile(g_app.nav.currentFileIndex - GetPagesPerView()); break;
-    case IDM_VIEW_NEXT:  GoToFile(g_app.nav.currentFileIndex + GetPagesPerView()); break;
+    case IDM_VIEW_PREV:  GoToFile(g_app.nav.currentFileIndex - 1); break;
+    case IDM_VIEW_NEXT:  GoToFile(g_app.nav.currentFileIndex + 1); break;
     case IDM_VIEW_LAST:  GoToFile((int)g_app.nav.viewableFiles.size() - 1); break;
 
     // ビューアー - スケールモード
@@ -327,36 +328,8 @@ void HandleKeyDown(HWND hwnd, WPARAM vk)
         }
         break;
     case VK_F1:
-    {
-        MessageBoxW(hwnd,
-            L"karikari - 画像/動画ビューア\n\n"
-            L"ショートカットキー:\n"
-            L"  ←/→  前/次ページ\n"
-            L"  Home/End  最初/最後\n"
-            L"  Alt+←/→  戻る/進む\n"
-            L"  Alt+↑  親フォルダ\n"
-            L"  ↑/↓  ファイルリスト移動\n"
-            L"  Enter  フォルダ/書庫を開く\n"
-            L"  F5  更新\n"
-            L"  F11  全画面\n"
-            L"  W  ウィンドウに合わせる\n"
-            L"  1/2/3  単ページ/見開き/自動\n"
-            L"  B  綴じ方向切替\n"
-            L"  L/R  左綴じ/右綴じ\n"
-            L"  V  表示モード切替\n"
-            L"  C  お気に入り表示\n"
-            L"  Space  メディア再生/一時停止\n"
-            L"  Ctrl+C  画像コピー\n"
-            L"  Ctrl+R  時計回り回転\n"
-            L"  Ctrl+Shift+R  反時計回り回転\n"
-            L"  Ctrl++/-  ズーム\n"
-            L"  Ctrl+0  ズームリセット\n"
-            L"  F2  名前変更\n"
-            L"  Delete  ファイル削除\n"
-            L"  Escape  全画面解除",
-            L"karikari ヘルプ", MB_OK | MB_ICONINFORMATION);
+        ShowHelpDialog(hwnd);
         break;
-    }
     case VK_F11:   ToggleFullscreen(hwnd); break;
     case VK_UP:
     case VK_DOWN:
