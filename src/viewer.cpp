@@ -1306,11 +1306,18 @@ bool ShouldShowSpread(int index)
 
     if (g_app.viewer.viewMode == 1) return false; // 単独モード
 
-    // 動画・音声は見開きの対象外
+    // 動画・音声・アニメーション(GIF/WebP)は見開きの対象外
     {
         int n = (int)g_app.nav.viewableFiles.size();
         if (index >= 0 && index < n && IsMediaFile(g_app.nav.viewableFiles[index])) return false;
         if (index + 1 < n && IsMediaFile(g_app.nav.viewableFiles[index + 1])) return false;
+
+        auto isAnimExt = [](const std::wstring& path) {
+            const wchar_t* ext = PathFindExtensionW(path.c_str());
+            return ext && (_wcsicmp(ext, L".gif") == 0 || _wcsicmp(ext, L".webp") == 0);
+        };
+        if (index >= 0 && index < n && isAnimExt(g_app.nav.viewableFiles[index])) return false;
+        if (index + 1 < n && isAnimExt(g_app.nav.viewableFiles[index + 1])) return false;
     }
 
     if (g_app.viewer.viewMode == 2)

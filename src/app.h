@@ -49,6 +49,8 @@ enum NavCommand : UINT {
     IDM_NAV_SETTINGS,
     IDM_NAV_HELP,
     IDM_TREE_SORT = 250,
+    IDM_BOOKSHELF_CLEAR = 251,
+    IDM_BOOKSHELF_SORT = 252,
 };
 
 // ビューアーコマンド
@@ -105,9 +107,12 @@ struct WindowHandles {
     HWND hwndAddressEdit = nullptr;
     HWND hwndFolderLabel = nullptr;   // 「フォルダ」ラベル
     HWND hwndTreeSortBtn = nullptr;   // ツリーソートボタン
+    HWND hwndBookshelfToolbar = nullptr;  // 本棚ツールバー（アイコン+ラベル+全削除+ソート）
+    HWND hwndBookshelfSortBtn = nullptr;  // 本棚ソートボタン（ツールバー内、右端に配置）
     HWND hwndTree = nullptr;
     HWND hwndList = nullptr;
     HWND hwndFilterBox = nullptr;
+    HWND hwndFilterPad = nullptr;     // フィルター右横パッド
     HWND hwndViewerTbLeft = nullptr;   // ビューアーツールバー左（ページナビ）
     HWND hwndViewerTbRight = nullptr;  // ビューアーツールバー右（表示設定）
     HWND hwndViewer = nullptr;

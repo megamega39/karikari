@@ -142,34 +142,47 @@ void LayoutChildren(HWND hwndParent)
         MoveWindow(g_app.wnd.hwndMainSplitter, leftW, mainY, kSplitterW, mainH, TRUE);
 
     // --- 左サイドバー ---
-    int folderLabelH = 20;
+    constexpr int headerH = 24; // 全モード統一（通常/本棚/履歴）
+    bool shelfMode = g_app.wnd.hwndBookshelfToolbar && IsWindowVisible(g_app.wnd.hwndBookshelfToolbar);
 
     g_app.sidebarSplitPos = std::max(kMinPanelSize,
                             std::min(g_app.sidebarSplitPos, mainH - kMinPanelSize - kSplitterW));
 
-    int treeH = g_app.sidebarSplitPos - folderLabelH;
+    int treeH = g_app.sidebarSplitPos - headerH;
     if (treeH < 0) treeH = 0;
     int listY = g_app.sidebarSplitPos + kSplitterW;
     int listH = mainH - listY;
 
     {
         int sortBtnW = 24;
-        if (g_app.wnd.hwndFolderLabel)
-            MoveWindow(g_app.wnd.hwndFolderLabel, 0, mainY, leftW - sortBtnW, folderLabelH, TRUE);
-        if (g_app.wnd.hwndTreeSortBtn)
-            MoveWindow(g_app.wnd.hwndTreeSortBtn, leftW - sortBtnW, mainY, sortBtnW, folderLabelH, TRUE);
+        if (!shelfMode)
+        {
+            if (g_app.wnd.hwndFolderLabel)
+                MoveWindow(g_app.wnd.hwndFolderLabel, 0, mainY, leftW - sortBtnW, headerH, TRUE);
+            if (g_app.wnd.hwndTreeSortBtn)
+                MoveWindow(g_app.wnd.hwndTreeSortBtn, leftW - sortBtnW, mainY, sortBtnW, headerH, TRUE);
+        }
+        else
+        {
+            MoveWindow(g_app.wnd.hwndBookshelfToolbar, 0, mainY, leftW, headerH, TRUE);
+            if (g_app.wnd.hwndBookshelfSortBtn)
+                MoveWindow(g_app.wnd.hwndBookshelfSortBtn, leftW - 24, 3, 24, 22, TRUE);
+        }
     }
 
     if (g_app.wnd.hwndTree)
-        MoveWindow(g_app.wnd.hwndTree, 0, mainY + folderLabelH, leftW, treeH, TRUE);
+        MoveWindow(g_app.wnd.hwndTree, 0, mainY + headerH, leftW, treeH, TRUE);
 
     if (g_app.wnd.hwndSidebarSplitter)
-        MoveWindow(g_app.wnd.hwndSidebarSplitter, 0, mainY + folderLabelH + treeH, leftW, kSplitterW, TRUE);
+        MoveWindow(g_app.wnd.hwndSidebarSplitter, 0, mainY + headerH + treeH, leftW, kSplitterW, TRUE);
 
     int filterH = 24;
     int sbW = GetSystemMetrics(SM_CXVSCROLL);
     if (g_app.wnd.hwndFilterBox)
         MoveWindow(g_app.wnd.hwndFilterBox, 0, mainY + listY, leftW - sbW, filterH, TRUE);
+    // フィルター右横のパッド（スクロールバー幅分の灰色背景）
+    if (g_app.wnd.hwndFilterPad)
+        MoveWindow(g_app.wnd.hwndFilterPad, leftW - sbW, mainY + listY, sbW, filterH, TRUE);
 
     if (g_app.wnd.hwndList)
     {
@@ -181,9 +194,9 @@ void LayoutChildren(HWND hwndParent)
     // 履歴モード: ツリー部分を履歴ツールバー+履歴ListViewに置き換え（ファイルリストは残す）
     if (g_app.wnd.hwndHistoryToolbar && IsWindowVisible(g_app.wnd.hwndHistoryToolbar))
     {
-        int htbH = 28;
+        int htbH = headerH;
         // ツリー領域（folderLabel + tree）を使う
-        int histAreaH = folderLabelH + treeH;
+        int histAreaH = headerH + treeH;
         MoveWindow(g_app.wnd.hwndHistoryToolbar, 0, mainY, leftW, htbH, TRUE);
         if (g_app.wnd.hwndHistoryFilter)
             MoveWindow(g_app.wnd.hwndHistoryFilter, 128, 3, leftW - 138, 22, TRUE);
@@ -629,7 +642,16 @@ static void HandleNotify(HWND hwnd, LPNMHDR pnm)
             TVHITTESTINFO ht = {}; ht.pt = clientPt;
             HTREEITEM hItem = (HTREEITEM)SendMessageW(g_app.wnd.hwndTree, TVM_HITTEST, 0, (LPARAM)&ht);
             if (hItem)
-                ShowFileContextMenu(hwnd, GetTreeItemPath(hItem), pt);
+            {
+                std::wstring treePath = GetTreeItemPath(hItem);
+                // 本棚モード: ITEM:プレフィックスを除去
+                if (GetTreeMode() == 1 && treePath.size() > 5 && treePath.substr(0, 5) == L"ITEM:")
+                    treePath = treePath.substr(5);
+                else if (GetTreeMode() == 1 && (treePath.substr(0, 4) == L"CAT:" || treePath == L"BOOKSHELF_ROOT"))
+                    treePath.clear(); // カテゴリ/ルートは通常コンテキストメニュー不要
+                if (!treePath.empty())
+                    ShowFileContextMenu(hwnd, treePath, pt);
+            }
         }
     }
     else if (pnm->hwndFrom == g_app.wnd.hwndList)
@@ -764,8 +786,10 @@ void ToggleFullscreen(HWND hwnd)
                      SWP_FRAMECHANGED);
 
         // UI非表示（メディアプレーヤーはLayoutChildrenで制御）
-        for (HWND h : { g_app.wnd.hwndNavBar, g_app.wnd.hwndAddressLabel,
-                        g_app.wnd.hwndAddressEdit, g_app.wnd.hwndTree,
+        for (HWND h : { g_app.wnd.hwndNavBar, g_app.wnd.hwndNavBarRight,
+                        g_app.wnd.hwndAddressLabel, g_app.wnd.hwndAddressEdit,
+                        g_app.wnd.hwndFolderLabel, g_app.wnd.hwndTreeSortBtn,
+                        g_app.wnd.hwndTree, g_app.wnd.hwndFilterBox,
                         g_app.wnd.hwndList, g_app.wnd.hwndMainSplitter,
                         g_app.wnd.hwndSidebarSplitter, g_app.wnd.hwndViewerTbLeft,
                         g_app.wnd.hwndViewerTbRight, g_app.wnd.hwndStatusBar })
@@ -785,10 +809,13 @@ void ToggleFullscreen(HWND hwnd)
                      SWP_FRAMECHANGED | SWP_NOZORDER);
 
         // UI再表示（メディアプレーヤーはLayoutChildrenで制御）
-        for (HWND h : { g_app.wnd.hwndNavBar, g_app.wnd.hwndAddressLabel,
-                        g_app.wnd.hwndTree, g_app.wnd.hwndList,
-                        g_app.wnd.hwndMainSplitter, g_app.wnd.hwndSidebarSplitter,
-                        g_app.wnd.hwndViewerTbLeft, g_app.wnd.hwndViewerTbRight, g_app.wnd.hwndStatusBar })
+        for (HWND h : { g_app.wnd.hwndNavBar, g_app.wnd.hwndNavBarRight,
+                        g_app.wnd.hwndAddressLabel, g_app.wnd.hwndAddressEdit,
+                        g_app.wnd.hwndFolderLabel, g_app.wnd.hwndTreeSortBtn,
+                        g_app.wnd.hwndTree, g_app.wnd.hwndFilterBox,
+                        g_app.wnd.hwndList, g_app.wnd.hwndMainSplitter,
+                        g_app.wnd.hwndSidebarSplitter, g_app.wnd.hwndViewerTbLeft,
+                        g_app.wnd.hwndViewerTbRight, g_app.wnd.hwndStatusBar })
             if (h) ShowWindow(h, SW_SHOW);
 
         g_app.isFullscreen = false;
@@ -841,6 +868,40 @@ static LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
             static HFONT hSortFont = CreateFontW(-12, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
                 DEFAULT_CHARSET, 0, 0, CLEARTYPE_QUALITY, 0, L"Segoe Fluent Icons");
             SendMessageW(g_app.wnd.hwndTreeSortBtn, WM_SETFONT, (WPARAM)hSortFont, TRUE);
+        }
+
+        // 本棚ツールバー（本棚モード時のみ表示: アイコン+ラベル+全削除+ソート）
+        {
+            static HFONT hShelfFont = CreateFontW(-12, 0, 0, 0, FW_NORMAL, 0, 0, 0, DEFAULT_CHARSET, 0, 0, CLEARTYPE_QUALITY, 0, L"Segoe UI");
+            g_app.wnd.hwndBookshelfToolbar = CreateWindowExW(0, L"STATIC", L"",
+                WS_CHILD | SS_NOTIFY, 0, 0, 100, 28, hwnd, nullptr, hInst, nullptr);
+
+            HWND hIcon = CreateWindowExW(0, L"STATIC", L"\uE82D",
+                WS_CHILD | WS_VISIBLE | SS_CENTERIMAGE, 4, 3, 20, 22, g_app.wnd.hwndBookshelfToolbar, nullptr, hInst, nullptr);
+            static HFONT hIconFont = CreateFontW(-12, 0, 0, 0, FW_NORMAL, 0, 0, 0, DEFAULT_CHARSET, 0, 0, ANTIALIASED_QUALITY, 0, L"Segoe Fluent Icons");
+            SendMessageW(hIcon, WM_SETFONT, (WPARAM)(hIconFont ? hIconFont : hShelfFont), TRUE);
+
+            HWND hLabel = CreateWindowExW(0, L"STATIC", L"本棚",
+                WS_CHILD | WS_VISIBLE | SS_CENTERIMAGE, 26, 3, 40, 22, g_app.wnd.hwndBookshelfToolbar, nullptr, hInst, nullptr);
+            SendMessageW(hLabel, WM_SETFONT, (WPARAM)hShelfFont, TRUE);
+
+            HWND hClear = CreateWindowExW(0, L"BUTTON", L"全削除",
+                WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, 70, 3, 52, 22, g_app.wnd.hwndBookshelfToolbar,
+                (HMENU)(UINT_PTR)IDM_BOOKSHELF_CLEAR, hInst, nullptr);
+            SendMessageW(hClear, WM_SETFONT, (WPARAM)hShelfFont, TRUE);
+
+            g_app.wnd.hwndBookshelfSortBtn = CreateWindowExW(0, L"BUTTON", L"\uE8CB",
+                WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON | BS_FLAT, 0, 0, 24, 22, g_app.wnd.hwndBookshelfToolbar,
+                (HMENU)(UINT_PTR)IDM_BOOKSHELF_SORT, hInst, nullptr);
+            SendMessageW(g_app.wnd.hwndBookshelfSortBtn, WM_SETFONT, (WPARAM)(hIconFont ? hIconFont : hShelfFont), TRUE);
+
+            // STATICの子ボタンのWM_COMMANDをメインウィンドウに転送
+            SetWindowSubclass(g_app.wnd.hwndBookshelfToolbar, [](HWND h, UINT msg, WPARAM wp, LPARAM lp,
+                UINT_PTR, DWORD_PTR) -> LRESULT {
+                if (msg == WM_COMMAND)
+                    return SendMessageW(GetParent(h), WM_COMMAND, wp, lp);
+                return DefSubclassProc(h, msg, wp, lp);
+            }, 0, 0);
         }
 
         // サイドバー: TreeView + ListView
@@ -1001,6 +1062,12 @@ static LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
             SendMessageW(g_app.wnd.hwndFilterBox, WM_SETFONT, (WPARAM)hFilterFont, TRUE);
             SendMessageW(g_app.wnd.hwndFilterBox, EM_SETCUEBANNER, TRUE, (LPARAM)L"Filter");
         }
+        // フィルター右横パッド（スクロールバー幅分の灰色背景）
+        g_app.wnd.hwndFilterPad = CreateWindowExW(
+            0, L"STATIC", L"",
+            WS_CHILD | WS_VISIBLE,
+            0, 0, 20, 24,
+            hwnd, nullptr, hInst, nullptr);
 
         // ListViewカラム
         LVCOLUMNW lvc = {};
@@ -1171,9 +1238,14 @@ static LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
 
     case WM_CTLCOLORSTATIC:
     {
-        // アドレスバーのSTATICコントロールは白背景（フォルダラベル以外）
         HWND hCtrl = (HWND)lParam;
-        if (hCtrl != g_app.wnd.hwndFolderLabel)
+        // フォルダラベル、本棚ツールバー内、フィルターパッドはデフォルト（灰色）
+        if (hCtrl == g_app.wnd.hwndFolderLabel ||
+            hCtrl == g_app.wnd.hwndFilterPad ||
+            hCtrl == g_app.wnd.hwndBookshelfToolbar ||
+            (g_app.wnd.hwndBookshelfToolbar && GetParent(hCtrl) == g_app.wnd.hwndBookshelfToolbar))
+            break;
+        // その他のSTATIC（アドレスバー等）は白背景
         {
             HDC hdc = (HDC)wParam;
             SetBkColor(hdc, GetSysColor(COLOR_WINDOW));
@@ -1181,7 +1253,6 @@ static LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
             static HBRUSH hWhiteBrush = CreateSolidBrush(GetSysColor(COLOR_WINDOW));
             return (LRESULT)hWhiteBrush;
         }
-        break;
     }
 
     case WM_COMMAND:

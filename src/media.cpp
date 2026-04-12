@@ -2,6 +2,7 @@
 #include "utils.h"
 #include "statusbar.h"
 #include "nav.h"
+#include "window.h"
 #include <cmath>
 #include <mfapi.h>
 #include <mfidl.h>
@@ -521,6 +522,8 @@ void MediaPlay(const std::wstring& path) {
         if (!g_app.wnd.hwndMediaPlayer)
             CreateMediaPlayer(g_app.wnd.hwndMain, g_app.hInstance);
         initialized = true;
+        // 初回作成後にレイアウト更新（プレーヤーの位置/サイズ設定）
+        LayoutChildren(g_app.wnd.hwndMain);
     }
 
     MediaStop();

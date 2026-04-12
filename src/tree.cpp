@@ -2,6 +2,8 @@
 #include "archive.h"
 #include "bookshelf.h"
 #include <unordered_map>
+#include <unordered_set>
+#include <algorithm>
 #include "favorites.h"
 #include "history.h"
 #include "utils.h"
@@ -517,10 +519,24 @@ void ExpandTreeNode(HTREEITEM hItem)
     // お気に入り親ノードは展開済み（FindFirstFileExスキップ）
     if (hItem == g_hFavoritesRoot) return;
 
-    // 本棚モードのノード（CAT:, ITEM:, BOOKSHELF_ROOT）はスキップ
+    // 本棚モードのノード: CAT:/BOOKSHELF_ROOTはスキップ、ITEM:は実パスに変換して展開
     std::wstring nodePath = GetTreeItemPath(hItem);
-    if (nodePath.substr(0, 4) == L"CAT:" || nodePath.substr(0, 5) == L"ITEM:" ||
-        nodePath == L"BOOKSHELF_ROOT") return;
+    if (nodePath.substr(0, 4) == L"CAT:" || nodePath == L"BOOKSHELF_ROOT") return;
+    if (nodePath.size() > 5 && nodePath.substr(0, 5) == L"ITEM:")
+    {
+        // ITEM:タグの実パスがフォルダなら、lParamを実パスに書き換えて通常展開
+        std::wstring realPath = nodePath.substr(5);
+        DWORD a = GetFileAttributesW(realPath.c_str());
+        if (a == INVALID_FILE_ATTRIBUTES || !(a & FILE_ATTRIBUTE_DIRECTORY)) return;
+        wchar_t* newStr = _wcsdup(realPath.c_str());
+        TVITEMW tvi = {};
+        tvi.mask = TVIF_PARAM;
+        tvi.hItem = hItem;
+        tvi.lParam = (LPARAM)newStr;
+        SendMessageW(hwnd, TVM_SETITEMW, 0, (LPARAM)&tvi);
+        nodePath = realPath;
+        // 以降は通常のフォルダ展開として処理
+    }
 
     // 既にダミー以外の子があれば何もしない
     HTREEITEM hChild = (HTREEITEM)SendMessageW(hwnd, TVM_GETNEXTITEM, TVGN_CHILD, (LPARAM)hItem);
@@ -748,6 +764,43 @@ static int g_treeMode = 0; // 0=通常, 1=本棚, 2=履歴
 // カテゴリ展開状態の記憶（セッション中のみ、再起動でリセット）
 static std::unordered_map<std::wstring, bool> g_catExpandState;
 
+// 通常ツリー展開状態の記憶（セッション中のみ）
+static std::unordered_set<std::wstring> g_normalExpandedPaths;
+
+// 再帰的に展開ノードのパスを収集
+static void CollectExpandedPaths(HWND hwnd, HTREEITEM hItem, std::unordered_set<std::wstring>& out)
+{
+    while (hItem)
+    {
+        UINT state = (UINT)SendMessageW(hwnd, TVM_GETITEMSTATE, (WPARAM)hItem, TVIS_EXPANDED);
+        if (state & TVIS_EXPANDED)
+        {
+            std::wstring path = GetTreeItemPath(hItem);
+            if (!path.empty()) out.insert(path);
+            HTREEITEM hChild = (HTREEITEM)SendMessageW(hwnd, TVM_GETNEXTITEM, TVGN_CHILD, (LPARAM)hItem);
+            if (hChild) CollectExpandedPaths(hwnd, hChild, out);
+        }
+        hItem = (HTREEITEM)SendMessageW(hwnd, TVM_GETNEXTITEM, TVGN_NEXT, (LPARAM)hItem);
+    }
+}
+
+// 保存した展開パスに基づいてノードを展開
+static void RestoreExpandedPaths(HWND hwnd, HTREEITEM hItem, const std::unordered_set<std::wstring>& paths, int depth = 0)
+{
+    if (depth > 10) return; // 深さ制限
+    while (hItem)
+    {
+        std::wstring path = GetTreeItemPath(hItem);
+        if (!path.empty() && paths.count(path))
+        {
+            SendMessageW(hwnd, TVM_EXPAND, TVE_EXPAND, (LPARAM)hItem);
+            HTREEITEM hChild = (HTREEITEM)SendMessageW(hwnd, TVM_GETNEXTITEM, TVGN_CHILD, (LPARAM)hItem);
+            if (hChild) RestoreExpandedPaths(hwnd, hChild, paths, depth + 1);
+        }
+        hItem = (HTREEITEM)SendMessageW(hwnd, TVM_GETNEXTITEM, TVGN_NEXT, (LPARAM)hItem);
+    }
+}
+
 void ShowBookshelfTree()
 {
     HWND hwnd = g_app.wnd.hwndTree;
@@ -788,18 +841,42 @@ void ShowBookshelfTree()
     int folderIcon = g_genericFolderIcon >= 0 ? g_genericFolderIcon : GetIconIndex(L"C:\\", false);
     int folderIconOpen = g_genericFolderIconOpen >= 0 ? g_genericFolderIconOpen : GetIconIndex(L"C:\\", true);
 
-    // カテゴリとアイテムを追加
+    // カテゴリとアイテムを追加（現在のソート順に従う）
     auto& cats = BookshelfGetCategories();
-    for (auto& cat : cats)
+    TreeSortMode sortMode = GetTreeSortMode();
+    bool sortDesc = GetTreeSortDescending();
+
+    // カテゴリをソート順にコピー
+    std::vector<size_t> catOrder(cats.size());
+    for (size_t i = 0; i < cats.size(); i++) catOrder[i] = i;
+    std::sort(catOrder.begin(), catOrder.end(), [&](size_t a, size_t b) {
+        int cmp = _wcsicmp(cats[a].name.c_str(), cats[b].name.c_str());
+        return sortDesc ? cmp > 0 : cmp < 0;
+    });
+
+    for (size_t ci : catOrder)
     {
+        auto& cat = cats[ci];
         std::wstring catTag = L"CAT:" + cat.id;
         HTREEITEM hCat = InsertTreeItemWithIcon(hwnd, hRoot, cat.name, catTag, !cat.items.empty(), folderIcon, folderIconOpen);
 
-        for (auto& item : cat.items)
+        // アイテムをソート順にコピー
+        std::vector<size_t> itemOrder(cat.items.size());
+        for (size_t i = 0; i < cat.items.size(); i++) itemOrder[i] = i;
+        std::sort(itemOrder.begin(), itemOrder.end(), [&](size_t a, size_t b) {
+            int cmp = _wcsicmp(cat.items[a].name.c_str(), cat.items[b].name.c_str());
+            return sortDesc ? cmp > 0 : cmp < 0;
+        });
+
+        for (size_t ii : itemOrder)
         {
+            auto& item = cat.items[ii];
             std::wstring itemTag = L"ITEM:" + item.path;
-            int itemIcon = GetIconIndex(item.path, false, true);
-            InsertTreeItemWithIcon(hwnd, hCat, item.name, itemTag, false, itemIcon);
+            DWORD attr = GetFileAttributesW(item.path.c_str());
+            bool isDir = (attr != INVALID_FILE_ATTRIBUTES) && (attr & FILE_ATTRIBUTE_DIRECTORY);
+            int itemIcon = isDir ? folderIcon : GetIconIndex(item.path, false, true);
+            int itemIconOpen = isDir ? folderIconOpen : itemIcon;
+            InsertTreeItemWithIcon(hwnd, hCat, item.name, itemTag, isDir, itemIcon, itemIconOpen);
         }
 
         // ユーザーが展開した状態を復元（記録がなければ未展開）
@@ -841,11 +918,34 @@ void ShowHistoryTree()
     InvalidateRect(hwnd, nullptr, TRUE);
 }
 
+// 通常ツリーの展開状態を保存（モード切替前に呼ぶ）
+void SaveNormalTreeState()
+{
+    HWND hwnd = g_app.wnd.hwndTree;
+    if (!hwnd || g_treeMode != 0) return;
+    g_normalExpandedPaths.clear();
+    HTREEITEM hRoot = (HTREEITEM)SendMessageW(hwnd, TVM_GETNEXTITEM, TVGN_ROOT, 0);
+    if (hRoot) CollectExpandedPaths(hwnd, hRoot, g_normalExpandedPaths);
+}
+
 void ShowNormalTree()
 {
     if (g_treeMode == 0) return; // 既に通常モード
     g_treeMode = 0;
     InitFolderTree();
+
+    // 展開状態を復元
+    if (!g_normalExpandedPaths.empty())
+    {
+        HWND hwnd = g_app.wnd.hwndTree;
+        if (hwnd)
+        {
+            SendMessageW(hwnd, WM_SETREDRAW, FALSE, 0);
+            HTREEITEM hRoot = (HTREEITEM)SendMessageW(hwnd, TVM_GETNEXTITEM, TVGN_ROOT, 0);
+            if (hRoot) RestoreExpandedPaths(hwnd, hRoot, g_normalExpandedPaths);
+            SendMessageW(hwnd, WM_SETREDRAW, TRUE, 0);
+        }
+    }
 }
 
 int GetTreeMode() { return g_treeMode; }
@@ -897,7 +997,81 @@ void SelectTreePath(const std::wstring& path)
 
     g_app.isRevealing = true;
 
-    // ルートノードから探す（ドライブレターで事前フィルタ）
+    // 本棚モード: "ITEM:パス" タグでノードを直接検索
+    if (g_treeMode == 1)
+    {
+        std::wstring targetTag = L"ITEM:" + path;
+        std::wstring tp = path;
+        if (!tp.empty() && tp.back() == L'\\') tp.pop_back();
+
+        HTREEITEM hBestMatch = nullptr;
+
+        // ルート→カテゴリ→アイテムの3階層を走査（全ノード探索）
+        HTREEITEM hRoot = (HTREEITEM)SendMessageW(hwnd, TVM_GETNEXTITEM, TVGN_ROOT, 0);
+        if (hRoot)
+        {
+            HTREEITEM hCat = (HTREEITEM)SendMessageW(hwnd, TVM_GETNEXTITEM, TVGN_CHILD, (LPARAM)hRoot);
+            while (hCat)
+            {
+                HTREEITEM hItem = (HTREEITEM)SendMessageW(hwnd, TVM_GETNEXTITEM, TVGN_CHILD, (LPARAM)hCat);
+                while (hItem)
+                {
+                    std::wstring tag = GetTreeItemPath(hItem);
+
+                    // 完全一致
+                    if (_wcsicmp(tag.c_str(), targetTag.c_str()) == 0)
+                    {
+                        hBestMatch = hItem;
+                        goto bookshelf_found;
+                    }
+
+                    // ITEM:タグのパス���、開いたパスの親ディレクトリか
+                    if (tag.size() > 5 && tag.substr(0, 5) == L"ITEM:")
+                    {
+                        std::wstring itemPath = tag.substr(5);
+                        if (!itemPath.empty() && itemPath.back() == L'\\') itemPath.pop_back();
+                        std::wstring prefix = itemPath + L"\\";
+                        if (_wcsnicmp(tp.c_str(), prefix.c_str(), prefix.size()) == 0)
+                            hBestMatch = hItem; // 最も深いマッチを保持（後から上書きOK）
+                    }
+
+                    hItem = (HTREEITEM)SendMessageW(hwnd, TVM_GETNEXTITEM, TVGN_NEXT, (LPARAM)hItem);
+                }
+                hCat = (HTREEITEM)SendMessageW(hwnd, TVM_GETNEXTITEM, TVGN_NEXT, (LPARAM)hCat);
+            }
+        }
+
+bookshelf_found:
+        if (hBestMatch)
+        {
+            // 親カテゴリを展開
+            HTREEITEM hParent = (HTREEITEM)SendMessageW(hwnd, TVM_GETNEXTITEM, TVGN_PARENT, (LPARAM)hBestMatch);
+            if (hParent) SendMessageW(hwnd, TVM_EXPAND, TVE_EXPAND, (LPARAM)hParent);
+
+            // ITEM:フォルダから展開して深く辿る
+            SendMessageW(hwnd, WM_SETREDRAW, FALSE, 0);
+            for (int depth = 0; depth < 50; depth++)
+            {
+                std::wstring np = GetTreeItemPath(hBestMatch);
+                if (np.size() > 5 && np.substr(0, 5) == L"ITEM:") np = np.substr(5);
+                if (!np.empty() && np.back() == L'\\') np.pop_back();
+                if (_wcsicmp(np.c_str(), tp.c_str()) == 0) break;
+
+                SendMessageW(hwnd, TVM_EXPAND, TVE_EXPAND, (LPARAM)hBestMatch);
+                HTREEITEM hChild = FindChildByPath(hwnd, hBestMatch, path);
+                if (!hChild) break;
+                hBestMatch = hChild;
+            }
+            SendMessageW(hwnd, WM_SETREDRAW, TRUE, 0);
+
+            SendMessageW(hwnd, TVM_SELECTITEM, TVGN_CARET, (LPARAM)hBestMatch);
+            SendMessageW(hwnd, TVM_ENSUREVISIBLE, 0, (LPARAM)hBestMatch);
+        }
+        g_app.isRevealing = false;
+        return;
+    }
+
+    // 通常モード: ルートノードから探す（ドライブレターで事前フィルタ）
     std::wstring tp = path;
     if (!tp.empty() && tp.back() == L'\\') tp.pop_back();
 

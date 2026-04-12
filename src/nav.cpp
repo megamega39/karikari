@@ -227,7 +227,7 @@ void NavigateTo(const std::wstring& path, NavigateOptions opts)
         PopulateListView();
         UpdateAddressBar(path);
         FsWatcherStart(path); // フォルダ変更監視開始
-        if (GetTreeMode() == 0 && opts.syncTreeSelection)
+        if ((GetTreeMode() == 0 || GetTreeMode() == 1) && opts.syncTreeSelection)
             SelectTreePath(path);
 
         SetMainTitle(path);
@@ -589,7 +589,10 @@ static void SyncListViewAndStatus(int index, const std::wstring& path)
                 fileSize = g_app.nav.fileItems[fit->second].fileSize;
             }
         }
-        int selectCount = g_app.viewer.isSpreadActive ? 2 : 1;
+        // 見開き時のみ2アイテム選択（書庫モードで画像表示中のみ）
+        int selectCount = 1;
+        if (g_app.viewer.isSpreadActive && g_app.nav.inArchiveMode)
+            selectCount = 2;
         ListViewSelectItem(lvIndex, selectCount);
     }
 
@@ -726,7 +729,7 @@ void ApplyArchiveLoadResult(ArchiveLoadResult* result)
     }
 
     if (GetTreeMode() != 2) HistoryAdd(result->archivePath);
-    if (GetTreeMode() == 0 && result->opts.syncTreeSelection)
+    if ((GetTreeMode() == 0 || GetTreeMode() == 1) && result->opts.syncTreeSelection)
         SelectTreePath(result->archivePath);
 
     if (!g_app.nav.viewableFiles.empty())

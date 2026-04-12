@@ -31,7 +31,8 @@ void HistoryAdd(const std::wstring& path)
 
     // 記録対象: 書庫・メディアのみ（フォルダ・画像は除外）
     std::wstring entryType;
-    if (path.find(L'!') != std::wstring::npos || IsArchiveFile(path))
+    std::wstring arcTmp, entTmp;
+    if (SplitArchivePath(path, arcTmp, entTmp) || IsArchiveFile(path))
         entryType = L"archive";
     else if (IsMediaFile(path))
         entryType = L"media";
@@ -40,9 +41,10 @@ void HistoryAdd(const std::wstring& path)
 
     // 表示名（パスの最後の部分）
     std::wstring name = path;
-    // 書庫内パスの場合は ! の前を使う
-    auto bangPos = name.find(L'!');
-    if (bangPos != std::wstring::npos) name = name.substr(0, bangPos);
+    // 書庫内パスの場合は書庫ファイル名を使う
+    std::wstring arcPath, entryPath;
+    if (SplitArchivePath(path, arcPath, entryPath))
+        name = arcPath;
     auto slashPos = name.find_last_of(L'\\');
     if (slashPos != std::wstring::npos) name = name.substr(slashPos + 1);
 

@@ -2,6 +2,7 @@
 #include "utils.h"
 #include <shlwapi.h>
 #include <objbase.h>
+#include <algorithm>
 
 static std::vector<BookshelfCategory> g_categories;
 
@@ -197,6 +198,28 @@ void BookshelfRemoveItem(const std::wstring& path)
                 [&](const BookshelfItem& i) { return _wcsicmp(i.path.c_str(), path.c_str()) == 0; }),
             cat.items.end());
     }
+    BookshelfSave();
+}
+
+void BookshelfClear()
+{
+    g_categories.clear();
+    BookshelfSave();
+}
+
+void BookshelfSortAll()
+{
+    // カテゴリを名前順にソート
+    std::sort(g_categories.begin(), g_categories.end(),
+        [](const BookshelfCategory& a, const BookshelfCategory& b) {
+            return _wcsicmp(a.name.c_str(), b.name.c_str()) < 0;
+        });
+    // 各カテゴリ内のアイテムも名前順にソート
+    for (auto& cat : g_categories)
+        std::sort(cat.items.begin(), cat.items.end(),
+            [](const BookshelfItem& a, const BookshelfItem& b) {
+                return _wcsicmp(a.name.c_str(), b.name.c_str()) < 0;
+            });
     BookshelfSave();
 }
 

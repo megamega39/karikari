@@ -551,30 +551,48 @@ static void ThumbWorkerFunc(PTP_CALLBACK_INSTANCE, PVOID ctx, PTP_WORK)
     else
     {
         DWORD attr = GetFileAttributesW(wi->path.c_str());
-        if (attr != INVALID_FILE_ATTRIBUTES && (attr & FILE_ATTRIBUTE_DIRECTORY))
-        {
-            // フォルダ → 中の最初の画像をサムネイルに
-            std::wstring search = wi->path + L"\\*";
-            WIN32_FIND_DATAW fd;
-            HANDLE hFind = FindFirstFileExW(search.c_str(), FindExInfoBasic, &fd,
-                                             FindExSearchNameMatch, nullptr, FIND_FIRST_EX_LARGE_FETCH);
-            if (hFind != INVALID_HANDLE_VALUE)
-            {
-                do {
-                    if (!(fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) && IsImageFile(fd.cFileName))
-                    {
-                        std::wstring imgPath = wi->path + L"\\" + fd.cFileName;
-                        hbmp = CreateThumbnailBitmap(imgPath, kThumbSize, kThumbSize, factory.Get());
-                        break;
-                    }
-                } while (FindNextFileW(hFind, &fd));
-                FindClose(hFind);
-            }
-        }
-        else
+        if (IsImageFile(wi->path))
         {
             // 通常の画像ファイル
             hbmp = CreateThumbnailBitmap(wi->path, kThumbSize, kThumbSize, factory.Get());
+        }
+        else
+        {
+            // フォルダ・動画・その他 → シェルサムネイルを試行
+            ComPtr<IShellItem> shellItem;
+            if (SUCCEEDED(SHCreateItemFromParsingName(wi->path.c_str(), nullptr, IID_PPV_ARGS(shellItem.GetAddressOf()))))
+            {
+                IShellItemImageFactory* imgFactory = nullptr;
+                if (SUCCEEDED(shellItem->QueryInterface(IID_PPV_ARGS(&imgFactory))))
+                {
+                    SIZE sz = { kThumbSize, kThumbSize };
+                    imgFactory->GetImage(sz, SIIGBF_THUMBNAILONLY, &hbmp);
+                    if (!hbmp) // THUMBNAILONLY失敗 → アイコンも許可
+                        imgFactory->GetImage(sz, SIIGBF_ICONONLY, &hbmp);
+                    imgFactory->Release();
+                }
+            }
+
+            // フォルダでシェルサムネイル取得失敗 → 中の最初の画像を探す
+            if (!hbmp && attr != INVALID_FILE_ATTRIBUTES && (attr & FILE_ATTRIBUTE_DIRECTORY))
+            {
+                std::wstring search = wi->path + L"\\*";
+                WIN32_FIND_DATAW fd;
+                HANDLE hFind = FindFirstFileExW(search.c_str(), FindExInfoBasic, &fd,
+                                                 FindExSearchNameMatch, nullptr, FIND_FIRST_EX_LARGE_FETCH);
+                if (hFind != INVALID_HANDLE_VALUE)
+                {
+                    do {
+                        if (!(fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) && IsImageFile(fd.cFileName))
+                        {
+                            std::wstring imgPath = wi->path + L"\\" + fd.cFileName;
+                            hbmp = CreateThumbnailBitmap(imgPath, kThumbSize, kThumbSize, factory.Get());
+                            break;
+                        }
+                    } while (FindNextFileW(hFind, &fd));
+                    FindClose(hFind);
+                }
+            }
         }
     }
 
@@ -726,12 +744,8 @@ void SwitchToGridView()
         lvi.iImage = 0;
         int actualIdx = (int)SendMessageW(hwnd, LVM_INSERTITEMW, 0, (LPARAM)&lvi);
 
-        if (IsImageFile(item.name) || IsImageFile(item.fullPath))
-            thumbItems.push_back({ actualIdx, item.fullPath });
-        else if (!item.isDirectory && IsArchiveFile(item.name))
-            thumbItems.push_back({ actualIdx, item.fullPath });
-        else if (item.isDirectory)
-            thumbItems.push_back({ actualIdx, item.fullPath });
+        // 全ファイル種別でサムネイル生成を試行
+        thumbItems.push_back({ actualIdx, item.fullPath });
     }
     SendMessageW(hwnd, WM_SETREDRAW, TRUE, 0);
     InvalidateRect(hwnd, nullptr, TRUE);

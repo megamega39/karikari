@@ -61,14 +61,17 @@ void HandleCommand(HWND hwnd, UINT cmd)
             if (g_app.wnd.hwndFolderLabel)
                 SetWindowTextW(g_app.wnd.hwndFolderLabel, L"フォルダ");
             LayoutChildren(hwnd);
-            // 書庫モード中なら書庫パスでリビール、そうでなければ現在フォルダ
+            // ツリーを現在のパスにリビール（ファイルリストは触らない）
             if (g_app.nav.inArchiveMode && !g_app.nav.currentArchive.empty())
                 SelectTreePath(g_app.nav.currentArchive);
             else if (!g_app.nav.currentFolder.empty())
-                NavigateTo(g_app.nav.currentFolder);
+                SelectTreePath(g_app.nav.currentFolder);
             break;
         }
-        // 本棚モードから来た場合: 通常UIに戻す（ShowHistoryTreeがtreeModeを変える）
+        // 通常モードの展開状態を保存
+        if (GetTreeMode() == 0) SaveNormalTreeState();
+        // 本棚モードから来た場合: 本棚ボタン非表示
+        if (g_app.wnd.hwndBookshelfToolbar) ShowWindow(g_app.wnd.hwndBookshelfToolbar, SW_HIDE);
         // 履歴モード有効化
         ShowHistoryTree(); // treeMode=2に設定
         // ツリー部分のみ非表示（ファイルリストは残す）
@@ -78,6 +81,8 @@ void HandleCommand(HWND hwnd, UINT cmd)
         // 履歴UI表示
         ShowWindow(g_app.wnd.hwndHistoryToolbar, SW_SHOW);
         ShowWindow(g_app.wnd.hwndHistoryList, SW_SHOW);
+        if (g_app.wnd.hwndHistoryFilter)
+            ShowWindow(g_app.wnd.hwndHistoryFilter, SW_SHOW);
         // ファイルリスト関連も明示的に表示
         ShowWindow(g_app.wnd.hwndSidebarSplitter, SW_SHOW);
         ShowWindow(g_app.wnd.hwndFilterBox, SW_SHOW);
@@ -100,6 +105,7 @@ void HandleCommand(HWND hwnd, UINT cmd)
             ShowNormalTree();
             ShowWindow(g_app.wnd.hwndFolderLabel, SW_SHOW);
             if (g_app.wnd.hwndTreeSortBtn) ShowWindow(g_app.wnd.hwndTreeSortBtn, SW_SHOW);
+            if (g_app.wnd.hwndBookshelfToolbar) ShowWindow(g_app.wnd.hwndBookshelfToolbar, SW_HIDE);
             ShowWindow(g_app.wnd.hwndTree, SW_SHOW);
             ShowWindow(g_app.wnd.hwndSidebarSplitter, SW_SHOW);
             ShowWindow(g_app.wnd.hwndFilterBox, SW_SHOW);
@@ -107,13 +113,15 @@ void HandleCommand(HWND hwnd, UINT cmd)
             if (g_app.wnd.hwndFolderLabel)
                 SetWindowTextW(g_app.wnd.hwndFolderLabel, L"フォルダ");
             LayoutChildren(hwnd);
-            // 書庫モード中なら書庫パスでリビール、そうでなければ現在フォルダ
+            // ツリーを現在のパスにリビール（ファイルリストは触らない）
             if (g_app.nav.inArchiveMode && !g_app.nav.currentArchive.empty())
                 SelectTreePath(g_app.nav.currentArchive);
             else if (!g_app.nav.currentFolder.empty())
-                NavigateTo(g_app.nav.currentFolder);
+                SelectTreePath(g_app.nav.currentFolder);
             break;
         }
+        // 通常モードの展開状態を保存
+        if (GetTreeMode() == 0) SaveNormalTreeState();
         // 履歴モードから来た場合: 履歴UI非表示
         if (GetTreeMode() == 2)
         {
@@ -129,15 +137,12 @@ void HandleCommand(HWND hwnd, UINT cmd)
         ShowWindow(g_app.wnd.hwndFilterBox, SW_SHOW);
         ShowWindow(g_app.wnd.hwndList, SW_SHOW);
         // 本棚モード有効化
+        if (g_app.wnd.hwndFolderLabel) ShowWindow(g_app.wnd.hwndFolderLabel, SW_HIDE);
         if (g_app.wnd.hwndTreeSortBtn) ShowWindow(g_app.wnd.hwndTreeSortBtn, SW_HIDE);
+        if (g_app.wnd.hwndBookshelfToolbar) ShowWindow(g_app.wnd.hwndBookshelfToolbar, SW_SHOW);
         ShowBookshelfTree();
-        if (g_app.wnd.hwndFolderLabel)
-            SetWindowTextW(g_app.wnd.hwndFolderLabel, L"本棚");
-        // ListViewをクリア
-        g_app.nav.fileItems.clear();
-        g_app.nav.viewableFiles.clear();
-        PopulateListView();
         UpdateAddressBar(L"本棚");
+        LayoutChildren(hwnd);
         break;
     }
 
@@ -192,6 +197,18 @@ void HandleCommand(HWND hwnd, UINT cmd)
     case IDM_NAV_LIST: SwitchToListView(); break;
     case IDM_NAV_GRID: SwitchToGridView(); break;
 
+    case IDM_BOOKSHELF_CLEAR:
+    {
+        if (MessageBoxW(hwnd, L"本棚の登録をすべて削除しますか？", L"確認",
+            MB_YESNO | MB_ICONQUESTION) == IDYES)
+        {
+            BookshelfClear();
+            if (GetTreeMode() == 1) ShowBookshelfTree();
+        }
+        break;
+    }
+
+    case IDM_BOOKSHELF_SORT:
     case IDM_TREE_SORT:
     {
         // ソートドロップダウンメニュー表示
@@ -208,7 +225,9 @@ void HandleCommand(HWND hwnd, UINT cmd)
         AppendMenuW(hMenu, MF_STRING | (curDesc ? MF_CHECKED : 0), 2515, L"降順");
 
         RECT rc;
-        GetWindowRect(g_app.wnd.hwndTreeSortBtn, &rc);
+        HWND sortBtn = (cmd == IDM_BOOKSHELF_SORT) ?
+            g_app.wnd.hwndBookshelfSortBtn : g_app.wnd.hwndTreeSortBtn;
+        GetWindowRect(sortBtn, &rc);
         int sortCmd = TrackPopupMenu(hMenu, TPM_RETURNCMD | TPM_LEFTALIGN | TPM_TOPALIGN,
                                  rc.left, rc.bottom, 0, hwnd, nullptr);
         DestroyMenu(hMenu);
@@ -239,6 +258,9 @@ void HandleCommand(HWND hwnd, UINT cmd)
             s.treeSortDescending = true;
             SaveSettings(s);
         }
+        // 本棚モード時はツリー再構築
+        if (sortCmd >= 2510 && GetTreeMode() == 1)
+            ShowBookshelfTree();
         break;
     }
     }
