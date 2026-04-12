@@ -204,11 +204,11 @@ void ShowHoverPreview(const std::wstring& path, POINT screenPos)
         UINT dstH = std::max(1U, (UINT)(imgH * scale));
 
         ComPtr<IWICBitmapScaler> scaler;
-        factory->CreateBitmapScaler(scaler.GetAddressOf());
-        scaler->Initialize(frame.Get(), dstW, dstH, WICBitmapInterpolationModeLinear);
+        if (FAILED(factory->CreateBitmapScaler(scaler.GetAddressOf())) || !scaler) return;
+        if (FAILED(scaler->Initialize(frame.Get(), dstW, dstH, WICBitmapInterpolationModeLinear))) return;
         ComPtr<IWICFormatConverter> converter;
-        factory->CreateFormatConverter(converter.GetAddressOf());
-        converter->Initialize(scaler.Get(), GUID_WICPixelFormat32bppBGRA, WICBitmapDitherTypeNone, nullptr, 0.0, WICBitmapPaletteTypeCustom);
+        if (FAILED(factory->CreateFormatConverter(converter.GetAddressOf())) || !converter) return;
+        if (FAILED(converter->Initialize(scaler.Get(), GUID_WICPixelFormat32bppBGRA, WICBitmapDitherTypeNone, nullptr, 0.0, WICBitmapPaletteTypeCustom))) return;
 
         BITMAPINFO bmi = {};
         bmi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);

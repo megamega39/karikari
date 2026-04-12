@@ -132,7 +132,7 @@ void PrefetchResetSettings()
     g_prefetchSettingsChanged = true;
 }
 
-extern int g_scrollSpeed; // nav.cppで定義
+extern std::atomic<int> g_scrollSpeed; // nav.cppで定義
 
 void PrefetchStart(int currentIndex, int direction)
 {

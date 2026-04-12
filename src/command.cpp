@@ -23,6 +23,45 @@ extern std::wstring g_historyFilterText;
 // ToggleFullscreen（window.cppに残っている）
 extern void ToggleFullscreen(HWND hwnd);
 
+// === UIモード切替ヘルパー ===
+static void ShowNormalUI()
+{
+    ShowWindow(g_app.wnd.hwndFolderLabel, SW_SHOW);
+    if (g_app.wnd.hwndTreeSortBtn) ShowWindow(g_app.wnd.hwndTreeSortBtn, SW_SHOW);
+    ShowWindow(g_app.wnd.hwndTree, SW_SHOW);
+    ShowWindow(g_app.wnd.hwndSidebarSplitter, SW_SHOW);
+    ShowWindow(g_app.wnd.hwndFilterBox, SW_SHOW);
+    ShowWindow(g_app.wnd.hwndList, SW_SHOW);
+    if (g_app.wnd.hwndFolderLabel)
+        SetWindowTextW(g_app.wnd.hwndFolderLabel, L"フォルダ");
+}
+
+static void HideHistoryUI()
+{
+    ShowWindow(g_app.wnd.hwndHistoryToolbar, SW_HIDE);
+    ShowWindow(g_app.wnd.hwndHistoryList, SW_HIDE);
+    if (g_app.wnd.hwndHistoryFilter) ShowWindow(g_app.wnd.hwndHistoryFilter, SW_HIDE);
+}
+
+static void HideBookshelfUI()
+{
+    if (g_app.wnd.hwndBookshelfToolbar) ShowWindow(g_app.wnd.hwndBookshelfToolbar, SW_HIDE);
+}
+
+static void HideNormalUI()
+{
+    ShowWindow(g_app.wnd.hwndFolderLabel, SW_HIDE);
+    if (g_app.wnd.hwndTreeSortBtn) ShowWindow(g_app.wnd.hwndTreeSortBtn, SW_HIDE);
+}
+
+static void RevealCurrentPath()
+{
+    if (g_app.nav.inArchiveMode && !g_app.nav.currentArchive.empty())
+        SelectTreePath(g_app.nav.currentArchive);
+    else if (!g_app.nav.currentFolder.empty())
+        SelectTreePath(g_app.nav.currentFolder);
+}
+
 void HandleCommand(HWND hwnd, UINT cmd)
 {
     switch (cmd)
@@ -46,37 +85,20 @@ void HandleCommand(HWND hwnd, UINT cmd)
     {
         if (GetTreeMode() == 2)
         {
-            // 履歴モード解除
+            // 履歴モード解除 → 通常モードへ
             ShowNormalTree();
-            // 履歴UI非表示
-            ShowWindow(g_app.wnd.hwndHistoryToolbar, SW_HIDE);
-            ShowWindow(g_app.wnd.hwndHistoryList, SW_HIDE);
-            // 通常UI再表示
-            ShowWindow(g_app.wnd.hwndFolderLabel, SW_SHOW);
-            if (g_app.wnd.hwndTreeSortBtn) ShowWindow(g_app.wnd.hwndTreeSortBtn, SW_SHOW);
-            ShowWindow(g_app.wnd.hwndTree, SW_SHOW);
-            ShowWindow(g_app.wnd.hwndSidebarSplitter, SW_SHOW);
-            ShowWindow(g_app.wnd.hwndFilterBox, SW_SHOW);
-            ShowWindow(g_app.wnd.hwndList, SW_SHOW);
-            if (g_app.wnd.hwndFolderLabel)
-                SetWindowTextW(g_app.wnd.hwndFolderLabel, L"フォルダ");
+            HideHistoryUI();
+            ShowNormalUI();
             LayoutChildren(hwnd);
-            // ツリーを現在のパスにリビール（ファイルリストは触らない）
-            if (g_app.nav.inArchiveMode && !g_app.nav.currentArchive.empty())
-                SelectTreePath(g_app.nav.currentArchive);
-            else if (!g_app.nav.currentFolder.empty())
-                SelectTreePath(g_app.nav.currentFolder);
+            RevealCurrentPath();
             break;
         }
-        // 通常モードの展開状態を保存
+        // 他モード → 履歴モードへ
         if (GetTreeMode() == 0) SaveNormalTreeState();
-        // 本棚モードから来た場合: 本棚ボタン非表示
-        if (g_app.wnd.hwndBookshelfToolbar) ShowWindow(g_app.wnd.hwndBookshelfToolbar, SW_HIDE);
+        HideBookshelfUI();
         // 履歴モード有効化
         ShowHistoryTree(); // treeMode=2に設定
-        // ツリー部分のみ非表示（ファイルリストは残す）
-        ShowWindow(g_app.wnd.hwndFolderLabel, SW_HIDE);
-        if (g_app.wnd.hwndTreeSortBtn) ShowWindow(g_app.wnd.hwndTreeSortBtn, SW_HIDE);
+        HideNormalUI();
         ShowWindow(g_app.wnd.hwndTree, SW_HIDE);
         // 履歴UI表示
         ShowWindow(g_app.wnd.hwndHistoryToolbar, SW_SHOW);
@@ -103,42 +125,18 @@ void HandleCommand(HWND hwnd, UINT cmd)
         {
             // 本棚モード解除 → 通常モードへ
             ShowNormalTree();
-            ShowWindow(g_app.wnd.hwndFolderLabel, SW_SHOW);
-            if (g_app.wnd.hwndTreeSortBtn) ShowWindow(g_app.wnd.hwndTreeSortBtn, SW_SHOW);
-            if (g_app.wnd.hwndBookshelfToolbar) ShowWindow(g_app.wnd.hwndBookshelfToolbar, SW_HIDE);
-            ShowWindow(g_app.wnd.hwndTree, SW_SHOW);
-            ShowWindow(g_app.wnd.hwndSidebarSplitter, SW_SHOW);
-            ShowWindow(g_app.wnd.hwndFilterBox, SW_SHOW);
-            ShowWindow(g_app.wnd.hwndList, SW_SHOW);
-            if (g_app.wnd.hwndFolderLabel)
-                SetWindowTextW(g_app.wnd.hwndFolderLabel, L"フォルダ");
+            HideBookshelfUI();
+            ShowNormalUI();
             LayoutChildren(hwnd);
-            // ツリーを現在のパスにリビール（ファイルリストは触らない）
-            if (g_app.nav.inArchiveMode && !g_app.nav.currentArchive.empty())
-                SelectTreePath(g_app.nav.currentArchive);
-            else if (!g_app.nav.currentFolder.empty())
-                SelectTreePath(g_app.nav.currentFolder);
+            RevealCurrentPath();
             break;
         }
         // 通常モードの展開状態を保存
         if (GetTreeMode() == 0) SaveNormalTreeState();
-        // 履歴モードから来た場合: 履歴UI非表示
-        if (GetTreeMode() == 2)
-        {
-            ShowWindow(g_app.wnd.hwndHistoryToolbar, SW_HIDE);
-            ShowWindow(g_app.wnd.hwndHistoryList, SW_HIDE);
-            if (g_app.wnd.hwndHistoryFilter)
-                ShowWindow(g_app.wnd.hwndHistoryFilter, SW_HIDE);
-        }
-        // 通常UIを表示（本棚ではツリーとリストを使う）
-        ShowWindow(g_app.wnd.hwndFolderLabel, SW_SHOW);
-        ShowWindow(g_app.wnd.hwndTree, SW_SHOW);
-        ShowWindow(g_app.wnd.hwndSidebarSplitter, SW_SHOW);
-        ShowWindow(g_app.wnd.hwndFilterBox, SW_SHOW);
-        ShowWindow(g_app.wnd.hwndList, SW_SHOW);
-        // 本棚モード有効化
-        if (g_app.wnd.hwndFolderLabel) ShowWindow(g_app.wnd.hwndFolderLabel, SW_HIDE);
-        if (g_app.wnd.hwndTreeSortBtn) ShowWindow(g_app.wnd.hwndTreeSortBtn, SW_HIDE);
+        // 他モード → 本棚モードへ
+        if (GetTreeMode() == 2) HideHistoryUI();
+        ShowNormalUI(); // ツリーとリストを表示
+        HideNormalUI(); // フォルダラベル/ソートボタンを非表示
         if (g_app.wnd.hwndBookshelfToolbar) ShowWindow(g_app.wnd.hwndBookshelfToolbar, SW_SHOW);
         ShowBookshelfTree();
         UpdateAddressBar(L"本棚");

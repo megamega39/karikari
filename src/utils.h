@@ -125,6 +125,62 @@ inline std::wstring ToLowerW(const std::wstring& s) {
     return result;
 }
 
+// === 簡易JSONパーサー（共通） ===
+inline bool JsonGetInt(const std::wstring& json, const wchar_t* key, int& out)
+{
+    std::wstring search = L"\""; search += key; search += L"\"";
+    auto pos = json.find(search);
+    if (pos == std::wstring::npos) return false;
+    pos = json.find(L':', pos);
+    if (pos == std::wstring::npos) return false;
+    pos++;
+    while (pos < json.size() && (json[pos] == L' ' || json[pos] == L'\t')) pos++;
+    out = _wtoi(&json[pos]);
+    return true;
+}
+
+inline bool JsonGetBool(const std::wstring& json, const wchar_t* key, bool& out)
+{
+    std::wstring search = L"\""; search += key; search += L"\"";
+    auto pos = json.find(search);
+    if (pos == std::wstring::npos) return false;
+    pos = json.find(L':', pos);
+    if (pos == std::wstring::npos) return false;
+    pos++;
+    while (pos < json.size() && json[pos] == L' ') pos++;
+    out = (json.substr(pos, 4) == L"true");
+    return true;
+}
+
+inline bool JsonGetString(const std::wstring& json, const wchar_t* key, std::wstring& out)
+{
+    std::wstring search = L"\""; search += key; search += L"\"";
+    auto pos = json.find(search);
+    if (pos == std::wstring::npos) return false;
+    pos = json.find(L':', pos);
+    if (pos == std::wstring::npos) return false;
+    pos = json.find(L'"', pos + 1);
+    if (pos == std::wstring::npos) return false;
+    pos++;
+    auto end = json.find(L'"', pos);
+    if (end == std::wstring::npos) return false;
+    out = UnescapeJsonPath(json.substr(pos, end - pos));
+    return true;
+}
+
+inline bool JsonGetFloat(const std::wstring& json, const wchar_t* key, float& out)
+{
+    std::wstring search = L"\""; search += key; search += L"\"";
+    auto pos = json.find(search);
+    if (pos == std::wstring::npos) return false;
+    pos = json.find(L':', pos);
+    if (pos == std::wstring::npos) return false;
+    pos++;
+    while (pos < json.size() && (json[pos] == L' ' || json[pos] == L'\t')) pos++;
+    out = (float)_wtof(&json[pos]);
+    return true;
+}
+
 // === 定数 ===
 constexpr float kZoomMin = 0.25f;  // 25%
 constexpr float kZoomMax = 16.0f;  // 1600%

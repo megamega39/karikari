@@ -16,63 +16,7 @@ std::wstring GetSettingsPath()
     return path;
 }
 
-// === 簡易JSONパーサー ===
-
-static bool JsonGetInt(const std::wstring& json, const wchar_t* key, int& out)
-{
-    std::wstring search = L"\""; search += key; search += L"\"";
-    auto pos = json.find(search);
-    if (pos == std::wstring::npos) return false;
-    pos = json.find(L':', pos);
-    if (pos == std::wstring::npos) return false;
-    pos++;
-    while (pos < json.size() && (json[pos] == L' ' || json[pos] == L'\t')) pos++;
-    out = _wtoi(&json[pos]);
-    return true;
-}
-
-static bool JsonGetBool(const std::wstring& json, const wchar_t* key, bool& out)
-{
-    std::wstring search = L"\""; search += key; search += L"\"";
-    auto pos = json.find(search);
-    if (pos == std::wstring::npos) return false;
-    pos = json.find(L':', pos);
-    if (pos == std::wstring::npos) return false;
-    pos++;
-    while (pos < json.size() && json[pos] == L' ') pos++;
-    out = (json.substr(pos, 4) == L"true");
-    return true;
-}
-
-static bool JsonGetString(const std::wstring& json, const wchar_t* key, std::wstring& out)
-{
-    std::wstring search = L"\""; search += key; search += L"\"";
-    auto pos = json.find(search);
-    if (pos == std::wstring::npos) return false;
-    pos = json.find(L':', pos);
-    if (pos == std::wstring::npos) return false;
-    pos = json.find(L'"', pos + 1);
-    if (pos == std::wstring::npos) return false;
-    pos++;
-    auto end = json.find(L'"', pos);
-    if (end == std::wstring::npos) return false;
-    out = json.substr(pos, end - pos);
-    out = UnescapeJsonPath(out);
-    return true;
-}
-
-static bool JsonGetFloat(const std::wstring& json, const wchar_t* key, float& out)
-{
-    std::wstring search = L"\""; search += key; search += L"\"";
-    auto pos = json.find(search);
-    if (pos == std::wstring::npos) return false;
-    pos = json.find(L':', pos);
-    if (pos == std::wstring::npos) return false;
-    pos++;
-    while (pos < json.size() && (json[pos] == L' ' || json[pos] == L'\t')) pos++;
-    out = (float)_wtof(&json[pos]);
-    return true;
-}
+// JSON関数は utils.h に共通化済み
 
 // === 設定キャッシュ ===
 static AppSettings g_cachedSettings;

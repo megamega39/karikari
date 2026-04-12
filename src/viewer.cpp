@@ -1296,13 +1296,17 @@ static bool IsPortrait(const std::wstring& path, bool cacheOnly = false, bool* s
 
 // 見開き判定結果キャッシュ
 static std::unordered_map<int, bool> g_spreadCache;
-void ClearSpreadCache() { g_spreadCache.clear(); }
+static std::mutex g_spreadCacheMutex;
+void ClearSpreadCache() { std::lock_guard<std::mutex> lk(g_spreadCacheMutex); g_spreadCache.clear(); }
 
 bool ShouldShowSpread(int index)
 {
-    // キャッシュヒット
-    auto it = g_spreadCache.find(index);
-    if (it != g_spreadCache.end()) return it->second;
+    // キャッシュヒット（スレッドセーフ）
+    {
+        std::lock_guard<std::mutex> lk(g_spreadCacheMutex);
+        auto it = g_spreadCache.find(index);
+        if (it != g_spreadCache.end()) return it->second;
+    }
 
     if (g_app.viewer.viewMode == 1) return false; // 単独モード
 
@@ -1344,11 +1348,11 @@ bool ShouldShowSpread(int index)
     bool nxt = IsPortrait(nextPath, true, &size2Known);
 
     // 横向きと確定した画像がある → 単独（キャッシュに記録）
-    if (size1Known && !cur) { g_spreadCache[index] = false; return false; }
-    if (size2Known && !nxt) { g_spreadCache[index] = false; return false; }
+    if (size1Known && !cur) { std::lock_guard<std::mutex> lk(g_spreadCacheMutex); g_spreadCache[index] = false; return false; }
+    if (size2Known && !nxt) { std::lock_guard<std::mutex> lk(g_spreadCacheMutex); g_spreadCache[index] = false; return false; }
 
     // 両方のサイズが判明して両方縦向き → 見開き（キャッシュに記録）
-    if (size1Known && size2Known) { g_spreadCache[index] = true; return true; }
+    if (size1Known && size2Known) { std::lock_guard<std::mutex> lk(g_spreadCacheMutex); g_spreadCache[index] = true; return true; }
 
     // サイズ不明あり → 見開きを試行するがキャッシュには入れない
     // （非同期デコード後にサイズが判明したら再判定される）

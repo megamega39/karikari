@@ -25,7 +25,7 @@ static std::atomic<int> g_archiveLoadGeneration{0};
 
 // スクロール速度判定用
 static ULONGLONG g_lastGoToTime = 0;
-int g_scrollSpeed = 0; // 0=通常, 1=高速 (prefetch.cppから参照)
+std::atomic<int> g_scrollSpeed{0}; // 0=通常, 1=高速 (prefetch.cppから参照)
 
 // ナビゲーション設定キャッシュ（ファイルスコープ）
 static bool g_navWrap = true;
