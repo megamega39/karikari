@@ -651,6 +651,14 @@ void GoToFile(int index)
 
     SyncListViewAndStatus(index, path);
     PrefetchStart(index, g_app.nav.lastNavDirection);
+
+    // アイドルプリフェッチタイマー: 500ms操作がなければ追加先読み
+    constexpr UINT_PTR kIdlePrefetchTimer = 100;
+    if (g_app.wnd.hwndMain)
+    {
+        KillTimer(g_app.wnd.hwndMain, kIdlePrefetchTimer);
+        SetTimer(g_app.wnd.hwndMain, kIdlePrefetchTimer, 500, nullptr);
+    }
 }
 
 void NavResetSettings()

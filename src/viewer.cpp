@@ -1264,9 +1264,9 @@ static bool GetImageSize(const std::wstring& path, UINT& w, UINT& h, bool cacheO
     // キャッシュに保存（mutex保護、1000超過時は半分削除）
     {
         std::lock_guard<std::mutex> lock(g_sizeCacheMutex);
-        if (g_sizeCache.size() > 1000) {
+        if (g_sizeCache.size() > 3000) {
             auto it = g_sizeCache.begin();
-            for (int i = 0; i < 500 && it != g_sizeCache.end(); i++)
+            for (int i = 0; i < 1500 && it != g_sizeCache.end(); i++)
                 it = g_sizeCache.erase(it);
         }
         g_sizeCache[path] = { w, h };
@@ -1278,9 +1278,9 @@ static bool GetImageSize(const std::wstring& path, UINT& w, UINT& h, bool cacheO
 void CacheImageSize(const std::wstring& path, UINT w, UINT h)
 {
     std::lock_guard<std::mutex> lock(g_sizeCacheMutex);
-    if (g_sizeCache.size() > 1000) {
+    if (g_sizeCache.size() > 3000) {
         auto it = g_sizeCache.begin();
-        for (int i = 0; i < 500 && it != g_sizeCache.end(); i++)
+        for (int i = 0; i < 1500 && it != g_sizeCache.end(); i++)
             it = g_sizeCache.erase(it);
     }
     g_sizeCache[path] = { w, h };
@@ -1315,18 +1315,11 @@ bool ShouldShowSpread(int index)
 
     if (g_app.viewer.viewMode == 1) return false; // 単独モード
 
-    // 動画・音声・アニメーション(GIF/WebP)は見開きの対象外
+    // 動画・音声は見開きの対象外
     {
         int n = (int)g_app.nav.viewableFiles.size();
         if (index >= 0 && index < n && IsMediaFile(g_app.nav.viewableFiles[index])) return false;
         if (index + 1 < n && IsMediaFile(g_app.nav.viewableFiles[index + 1])) return false;
-
-        auto isAnimExt = [](const std::wstring& path) {
-            const wchar_t* ext = PathFindExtensionW(path.c_str());
-            return ext && (_wcsicmp(ext, L".gif") == 0 || _wcsicmp(ext, L".webp") == 0);
-        };
-        if (index >= 0 && index < n && isAnimExt(g_app.nav.viewableFiles[index])) return false;
-        if (index + 1 < n && isAnimExt(g_app.nav.viewableFiles[index + 1])) return false;
     }
 
     if (g_app.viewer.viewMode == 2)
@@ -1347,10 +1340,10 @@ bool ShouldShowSpread(int index)
     // メディアファイルは見開き不可
     if (IsMediaFile(currentPath) || IsMediaFile(nextPath)) return false;
 
-    // 現在のページの縦横比チェック（cacheOnly: UIブロック回避）
+    // 現在のページの縦横比チェック（サイズ不明ならWICヘッダ読みで取得）
     bool size1Known = false, size2Known = false;
-    bool cur = IsPortrait(currentPath, true, &size1Known);
-    bool nxt = IsPortrait(nextPath, true, &size2Known);
+    bool cur = IsPortrait(currentPath, false, &size1Known);
+    bool nxt = IsPortrait(nextPath, false, &size2Known);
 
     // 横向きと確定した画像がある → 単独（キャッシュに記録）
     if (size1Known && !cur) { std::lock_guard<std::mutex> lk(g_spreadCacheMutex); g_spreadCache[index] = false; return false; }

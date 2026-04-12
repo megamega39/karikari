@@ -942,6 +942,8 @@ void RefreshTree()
     if (g_treeMode == 2) return; // 履歴モードはツリー不使用
 
     // 通常モード: 展開状態+スクロール位置を保持して再構築
+    g_app.isRevealing = true; // 展開/選択によるTVN_SELCHANGEDを無視
+
     // 1. スクロール位置を保存
     SCROLLINFO si = {}; si.cbSize = sizeof(si); si.fMask = SIF_POS;
     GetScrollInfo(hwnd, SB_VERT, &si);
@@ -969,6 +971,7 @@ void RefreshTree()
 
     SendMessageW(hwnd, WM_SETREDRAW, TRUE, 0);
     InvalidateRect(hwnd, nullptr, TRUE);
+    g_app.isRevealing = false;
 }
 
 void ShowNormalTree()
@@ -1114,37 +1117,55 @@ bookshelf_found:
         return;
     }
 
-    // 通常モード: ルートノードから探す（ドライブレターで事前フィルタ）
+    // 通常モード: お気に入り配下を優先検索、次にルートノード
     std::wstring tp = path;
     if (!tp.empty() && tp.back() == L'\\') tp.pop_back();
 
-    HTREEITEM hCurrent = (HTREEITEM)SendMessageW(hwnd, TVM_GETNEXTITEM, TVGN_ROOT, 0);
     HTREEITEM hBest = nullptr;
 
-    while (hCurrent)
+    // お気に入り配下を先に検索（より深いマッチを優先）
+    if (g_hFavoritesRoot)
     {
-        std::wstring nodePath = GetTreeItemPath(hCurrent);
-        std::wstring np = nodePath;
-        if (!np.empty() && np.back() == L'\\') np.pop_back();
-
-        if (_wcsicmp(np.c_str(), tp.c_str()) == 0)
+        HTREEITEM hFavChild = (HTREEITEM)SendMessageW(hwnd, TVM_GETNEXTITEM, TVGN_CHILD, (LPARAM)g_hFavoritesRoot);
+        while (hFavChild)
         {
-            hBest = hCurrent;
-            break;
-        }
+            std::wstring np = GetTreeItemPath(hFavChild);
+            if (!np.empty() && np.back() == L'\\') np.pop_back();
 
-        // path が nodePath の子か
-        if (!np.empty())
-        {
-            std::wstring prefix = np + L"\\";
-            if (_wcsnicmp(path.c_str(), prefix.c_str(), prefix.size()) == 0)
+            if (_wcsicmp(np.c_str(), tp.c_str()) == 0)
+            { hBest = hFavChild; break; }
+
+            if (!np.empty())
             {
-                hBest = hCurrent;
-                break;
+                std::wstring prefix = np + L"\\";
+                if (_wcsnicmp(path.c_str(), prefix.c_str(), prefix.size()) == 0)
+                { hBest = hFavChild; break; }
             }
+            hFavChild = (HTREEITEM)SendMessageW(hwnd, TVM_GETNEXTITEM, TVGN_NEXT, (LPARAM)hFavChild);
         }
+    }
 
-        hCurrent = (HTREEITEM)SendMessageW(hwnd, TVM_GETNEXTITEM, TVGN_NEXT, (LPARAM)hCurrent);
+    // お気に入りでマッチしなければルートノードを検索
+    if (!hBest)
+    {
+        HTREEITEM hCurrent = (HTREEITEM)SendMessageW(hwnd, TVM_GETNEXTITEM, TVGN_ROOT, 0);
+        while (hCurrent)
+        {
+            std::wstring nodePath = GetTreeItemPath(hCurrent);
+            std::wstring np = nodePath;
+            if (!np.empty() && np.back() == L'\\') np.pop_back();
+
+            if (_wcsicmp(np.c_str(), tp.c_str()) == 0)
+            { hBest = hCurrent; break; }
+
+            if (!np.empty())
+            {
+                std::wstring prefix = np + L"\\";
+                if (_wcsnicmp(path.c_str(), prefix.c_str(), prefix.size()) == 0)
+                { hBest = hCurrent; break; }
+            }
+            hCurrent = (HTREEITEM)SendMessageW(hwnd, TVM_GETNEXTITEM, TVGN_NEXT, (LPARAM)hCurrent);
+        }
     }
 
     if (!hBest)

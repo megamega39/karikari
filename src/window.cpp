@@ -1162,6 +1162,14 @@ static LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
                 WS_CHILD | WS_VISIBLE | ES_AUTOHSCROLL, 128, 3, 100, 22, g_app.wnd.hwndHistoryToolbar, nullptr, hInst, nullptr);
             SendMessageW(g_app.wnd.hwndHistoryFilter, WM_SETFONT, (WPARAM)hHistFont, TRUE);
             SendMessageW(g_app.wnd.hwndHistoryFilter, EM_SETCUEBANNER, TRUE, (LPARAM)L"フィルター...");
+
+            // STATICの子コントロールのWM_COMMANDをメインウィンドウに転送
+            SetWindowSubclass(g_app.wnd.hwndHistoryToolbar, [](HWND h, UINT msg, WPARAM wp, LPARAM lp,
+                UINT_PTR, DWORD_PTR) -> LRESULT {
+                if (msg == WM_COMMAND)
+                    return SendMessageW(GetParent(h), WM_COMMAND, wp, lp);
+                return DefSubclassProc(h, msg, wp, lp);
+            }, 0, 0);
         }
 
         // 履歴ListView（初期非表示）
@@ -1585,6 +1593,15 @@ static LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
                 NavigateTo(g_pendingTreePath, { true, false });
                 g_pendingTreePath.clear();
             }
+        }
+        if (wParam == 100) // kIdlePrefetchTimer（nav.cppで定義）
+        {
+            KillTimer(hwnd, 100);
+            int idx = g_app.nav.currentFileIndex;
+            int dir = g_app.nav.lastNavDirection;
+            if (dir == 0) dir = 1;
+            if (idx >= 0 && !g_app.nav.viewableFiles.empty())
+                PrefetchIdleStart(idx, dir);
         }
         return 0;
     }

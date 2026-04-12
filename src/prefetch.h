@@ -11,5 +11,6 @@ struct PrefetchDoneMsg {
 
 void PrefetchShutdown();
 void PrefetchStart(int currentIndex, int direction);
+void PrefetchIdleStart(int currentIndex, int direction); // アイドル時追加先読み
 void PrefetchCancel();
 void PrefetchResetSettings(); // 設定変更時に呼ぶ

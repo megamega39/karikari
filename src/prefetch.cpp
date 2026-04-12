@@ -265,3 +265,45 @@ void PrefetchStart(int currentIndex, int direction)
         else delete item;
     }
 }
+
+void PrefetchIdleStart(int currentIndex, int direction)
+{
+    // 通常プリフェッチの範囲の「続き」から追加先読み（世代は進めない）
+    int gen = g_prefetchGeneration.load();
+    int total = (int)g_app.nav.viewableFiles.size();
+    if (total == 0) return;
+
+    static int cachedCount = 0;
+    if (cachedCount <= 0 || g_prefetchSettingsChanged)
+    {
+        const auto& s = GetCachedSettings();
+        cachedCount = std::max(1, s.prefetchCount);
+    }
+    int normalCount = cachedCount;
+    if (g_app.nav.inArchiveMode) normalCount = normalCount * 3 / 2;
+    int normalFwd = std::max(1, (normalCount * 3 + 3) / 4);
+
+    // アイドル追加分: 通常前方範囲の続きから同枚数ぶん
+    int idleCount = normalCount;
+    int startOffset = normalFwd + 1;
+
+    struct WorkItem { int idx; std::wstring path; int generation; };
+
+    for (int i = startOffset; i < startOffset + idleCount; i++)
+    {
+        int idx = currentIndex + i * direction;
+        if (idx < 0 || idx >= total) continue;
+        if (CacheContains(g_app.nav.viewableFiles[idx])) continue;
+        if (gen != g_prefetchGeneration.load()) break;
+
+        std::wstring path = g_app.nav.viewableFiles[idx];
+        auto* item = new WorkItem{ idx, path, gen };
+        PTP_WORK work = CreateThreadpoolWork([](PTP_CALLBACK_INSTANCE, PVOID ctx, PTP_WORK) {
+            auto* wi = (WorkItem*)ctx;
+            PrefetchWorker(wi->idx, wi->path, wi->generation);
+            delete wi;
+        }, item, nullptr);
+        if (work) SubmitThreadpoolWork(work);
+        else delete item;
+    }
+}
