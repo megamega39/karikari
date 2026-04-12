@@ -644,13 +644,64 @@ static void HandleNotify(HWND hwnd, LPNMHDR pnm)
             if (hItem)
             {
                 std::wstring treePath = GetTreeItemPath(hItem);
-                // 本棚モード: ITEM:プレフィックスを除去
+                // 本棚モード
                 if (GetTreeMode() == 1 && treePath.size() > 5 && treePath.substr(0, 5) == L"ITEM:")
+                {
                     treePath = treePath.substr(5);
-                else if (GetTreeMode() == 1 && (treePath.substr(0, 4) == L"CAT:" || treePath == L"BOOKSHELF_ROOT"))
-                    treePath.clear(); // カテゴリ/ルートは通常コンテキストメニュー不要
-                if (!treePath.empty())
                     ShowFileContextMenu(hwnd, treePath, pt);
+                }
+                else if (GetTreeMode() == 1 && treePath.size() > 4 && treePath.substr(0, 4) == L"CAT:")
+                {
+                    // カテゴリ右クリック: 本棚削除/名前変更メニュー
+                    HMENU hMenu = CreatePopupMenu();
+                    AppendMenuW(hMenu, MF_STRING, 1, L"この本棚を削除");
+                    AppendMenuW(hMenu, MF_STRING, 2, L"名前を変更");
+                    UINT cmd = TrackPopupMenu(hMenu, TPM_RETURNCMD | TPM_RIGHTBUTTON, pt.x, pt.y, 0, hwnd, nullptr);
+                    DestroyMenu(hMenu);
+                    if (cmd == 1)
+                    {
+                        std::wstring catId = treePath.substr(4);
+                        BookshelfRemoveCategory(catId);
+                        ShowBookshelfTree();
+                    }
+                    else if (cmd == 2)
+                    {
+                        // インラインラベル編集を開始
+                        SendMessageW(g_app.wnd.hwndTree, TVM_EDITLABEL, 0, (LPARAM)hItem);
+                    }
+                }
+                else if (GetTreeMode() == 1 && treePath == L"BOOKSHELF_ROOT")
+                {
+                    // ルートは何もしない
+                }
+                else if (!treePath.empty())
+                {
+                    ShowFileContextMenu(hwnd, treePath, pt);
+                }
+            }
+        }
+        else if (pnm->code == TVN_BEGINLABELEDITW)
+        {
+            // 本棚モードのCAT:ノードのみ編集許可
+            auto pdi = (LPNMTVDISPINFOW)pnm;
+            std::wstring tag = GetTreeItemPath(pdi->item.hItem);
+            if (GetTreeMode() == 1 && tag.size() > 4 && tag.substr(0, 4) == L"CAT:")
+                SetWindowLongPtrW(hwnd, DWLP_MSGRESULT, FALSE); // 編集許可
+            else
+                SetWindowLongPtrW(hwnd, DWLP_MSGRESULT, TRUE); // 編集拒否
+        }
+        else if (pnm->code == TVN_ENDLABELEDITW)
+        {
+            auto pdi = (LPNMTVDISPINFOW)pnm;
+            if (pdi->item.pszText && pdi->item.pszText[0] != L'\0')
+            {
+                std::wstring tag = GetTreeItemPath(pdi->item.hItem);
+                if (tag.size() > 4 && tag.substr(0, 4) == L"CAT:")
+                {
+                    std::wstring catId = tag.substr(4);
+                    BookshelfRenameCategory(catId, pdi->item.pszText);
+                    SetWindowLongPtrW(hwnd, DWLP_MSGRESULT, TRUE); // 変更を反映
+                }
             }
         }
     }
@@ -908,7 +959,7 @@ static LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
         g_app.wnd.hwndTree = CreateWindowExW(
             0, WC_TREEVIEWW, nullptr,
             WS_CHILD | WS_VISIBLE
-            | TVS_HASBUTTONS | TVS_HASLINES | TVS_LINESATROOT | TVS_SHOWSELALWAYS | TVS_NOHSCROLL,
+            | TVS_HASBUTTONS | TVS_HASLINES | TVS_LINESATROOT | TVS_SHOWSELALWAYS | TVS_NOHSCROLL | TVS_EDITLABELS,
             0, 0, 100, 100,
             hwnd, (HMENU)(UINT_PTR)IDC_TREEVIEW, hInst, nullptr);
 
@@ -1294,6 +1345,13 @@ static LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
         {
             HandleNotify(hwnd, pnm);
             return TBDDRET_DEFAULT;
+        }
+        // TVN_BEGINLABELEDIT / TVN_ENDLABELEDIT は戻り値が必要
+        if (pnm->hwndFrom == g_app.wnd.hwndTree &&
+            (pnm->code == TVN_BEGINLABELEDITW || pnm->code == TVN_ENDLABELEDITW))
+        {
+            HandleNotify(hwnd, pnm);
+            return GetWindowLongPtrW(hwnd, DWLP_MSGRESULT);
         }
         HandleNotify(hwnd, pnm);
         return 0;

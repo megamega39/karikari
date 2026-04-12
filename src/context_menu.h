@@ -14,3 +14,5 @@ void ShowInExplorer(const std::wstring& path);
 void ShowContextMenu(HWND hwnd, int x, int y, bool isViewer);
 void CopyToClipboard(HWND hwnd, const std::wstring& text);
 void CopyImageToClipboard(HWND hwnd);
+bool ShowInputDialog(HWND hwndParent, const wchar_t* title, const wchar_t* prompt,
+                     wchar_t* buf, int bufSize, const wchar_t* defaultText = L"");

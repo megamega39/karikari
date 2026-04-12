@@ -24,16 +24,22 @@ static INT_PTR CALLBACK InputDlgProc(HWND hDlg, UINT msg, WPARAM wParam, LPARAM)
         {
             wchar_t* buf = (wchar_t*)GetWindowLongPtrW(hDlg, GWLP_USERDATA);
             if (buf) GetDlgItemTextW(hDlg, 101, buf, 256);
-            EndDialog(hDlg, IDOK);
+            DestroyWindow(hDlg);
             return TRUE;
         }
-        if (LOWORD(wParam) == IDCANCEL) { EndDialog(hDlg, IDCANCEL); return TRUE; }
+        if (LOWORD(wParam) == IDCANCEL)
+        {
+            wchar_t* buf = (wchar_t*)GetWindowLongPtrW(hDlg, GWLP_USERDATA);
+            if (buf) buf[0] = L'\0';
+            DestroyWindow(hDlg);
+            return TRUE;
+        }
     }
     return FALSE;
 }
 
-static bool ShowInputDialog(HWND hwndParent, const wchar_t* title, const wchar_t* prompt,
-                             wchar_t* buf, int bufSize, const wchar_t* defaultText = L"")
+bool ShowInputDialog(HWND hwndParent, const wchar_t* title, const wchar_t* prompt,
+                     wchar_t* buf, int bufSize, const wchar_t* defaultText)
 {
     wcscpy_s(buf, bufSize, defaultText);
 
