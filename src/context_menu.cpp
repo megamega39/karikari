@@ -6,6 +6,7 @@
 #include "archive.h"
 #include "i18n.h"
 #include <shlwapi.h>
+#include <shlobj.h>
 #include <shellapi.h>
 #include <wincodec.h>
 #include <wrl/client.h>
@@ -104,8 +105,13 @@ void CopyToClipboard(HWND hwnd, const std::wstring& text)
 
 void ShowInExplorer(const std::wstring& path)
 {
-    std::wstring cmd = L"/select,\"" + path + L"\"";
-    ShellExecuteW(nullptr, L"open", L"explorer.exe", cmd.c_str(), nullptr, SW_SHOW);
+    // SHOpenFolderAndSelectItems（PIDL経由、コマンドインジェクション不可）
+    PIDLIST_ABSOLUTE pidl = nullptr;
+    if (SUCCEEDED(SHParseDisplayName(path.c_str(), nullptr, &pidl, 0, nullptr)))
+    {
+        SHOpenFolderAndSelectItems(pidl, 0, nullptr, 0);
+        CoTaskMemFree(pidl);
+    }
 }
 
 void CopyImageToClipboard(HWND hwnd)

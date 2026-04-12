@@ -98,6 +98,7 @@ struct CachedArchiveHandle {
 static constexpr int kMaxArchiveCache = 3;
 
 static std::wstring NormalizePath(const std::wstring& p); // 前方宣言
+static bool IsValidEntryPath(const std::wstring& path); // 前方宣言
 
 // === エントリリストのディスクキャッシュ ===
 #include "utils.h"
@@ -186,6 +187,7 @@ static bool LoadEntryCache(const std::wstring& archivePath,
         e.path = line.substr(tab1 + 1, tab2 - tab1 - 1);
         e.size = (ULONGLONG)_wtoi64(line.substr(tab2 + 1).c_str());
 
+        if (!IsValidEntryPath(e.path)) continue; // キャッシュ改ざん対策
         indexMap[NormalizePath(e.path)] = e.index;
         entries.push_back(std::move(e));
     }
@@ -249,7 +251,7 @@ public:
 };
 
 // === メモリ出力ストリーム ===
-static constexpr size_t kMaxExtractBytes = 2ULL * 1024 * 1024 * 1024; // 2GB 展開上限
+static constexpr size_t kMaxExtractBytes = 256ULL * 1024 * 1024; // 256MB メモリ展開上限（大ファイルはFileOutStreamでテンプ展開）
 
 class MemoryOutStream : public ISequentialOutStream {
     LONG refCount_ = 1;
@@ -623,7 +625,7 @@ bool ExtractToMemory(const std::wstring& archivePath,
     // 既知サイズで事前確保（再アロケーション削減）
     UInt32 targetIndex = it->second;
     for (auto& e : g_currentHandle->entryList) {
-        if (e.index == targetIndex) { buffer.reserve(static_cast<size_t>(e.size)); break; }
+        if (e.index == targetIndex && e.size <= kMaxExtractBytes) { buffer.reserve(static_cast<size_t>(e.size)); break; }
     }
 
     MemoryExtractCallback* cb = new MemoryExtractCallback(buffer);
@@ -705,9 +707,20 @@ bool ExtractSmart(const std::wstring& archivePath,
     }
 
     // 大ファイル → 7zからテンポラリファイルに直接展開（メモリ節約）
+    // 拡張子サニタイズ（英数字+ドットのみ、最大10文字）
     std::wstring ext;
     auto dotPos = entryPath.rfind(L'.');
-    if (dotPos != std::wstring::npos) ext = entryPath.substr(dotPos);
+    if (dotPos != std::wstring::npos)
+    {
+        std::wstring rawExt = entryPath.substr(dotPos);
+        if (rawExt.size() <= 10)
+        {
+            bool safe = true;
+            for (auto c : rawExt)
+                if (!iswalnum(c) && c != L'.') { safe = false; break; }
+            if (safe) ext = rawExt;
+        }
+    }
 
     wchar_t tmpFile[MAX_PATH];
     GetTempFileNameW(GetTempDir().c_str(), L"kk", 0, tmpFile);

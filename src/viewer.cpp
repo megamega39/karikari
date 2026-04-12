@@ -14,6 +14,13 @@
 #include <webp/decode.h>
 #include <webp/demux.h>
 
+// 型安全なWebPAnimDecoderアクセサ（app.hではvoid*で保持）
+static WebPAnimDecoder* GetWebPDecoder() { return static_cast<WebPAnimDecoder*>(g_app.viewer.webpDecoder); }
+static void SetWebPDecoder(WebPAnimDecoder* dec) { g_app.viewer.webpDecoder = dec; }
+static void DeleteWebPDecoder() {
+    if (g_app.viewer.webpDecoder) { WebPAnimDecoderDelete(GetWebPDecoder()); g_app.viewer.webpDecoder = nullptr; }
+}
+
 static bool LoadBitmapCached(const std::wstring& path, ComPtr<ID2D1Bitmap>& out);
 static constexpr UINT_PTR kAnimTimerId = 42;
 static bool GifDecodeNextFrame(ComPtr<ID2D1Bitmap>& outBmp, int& outDelay);
@@ -368,7 +375,7 @@ static LRESULT CALLBACK ViewerWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM
 
         if (g_app.viewer.animType == ViewerState::AnimWebP)
         {
-            auto* dec = static_cast<WebPAnimDecoder*>(g_app.viewer.webpDecoder);
+            auto* dec = GetWebPDecoder();
             if (!dec) return 0;
 
             if (!WebPAnimDecoderHasMoreFrames(dec))
@@ -396,15 +403,14 @@ static LRESULT CALLBACK ViewerWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM
                 g_app.viewer.webpPrevTimestamp = timestamp;
 
                 UINT stride = g_app.viewer.webpCanvasW * 4;
+                bool reused = false;
                 if (g_app.viewer.bitmap)
                 {
                     auto sz = g_app.viewer.bitmap->GetPixelSize();
                     if (sz.width == g_app.viewer.webpCanvasW && sz.height == g_app.viewer.webpCanvasH)
-                    {
-                        g_app.viewer.bitmap->CopyFromMemory(nullptr, buf, stride);
-                        goto anim_done;
-                    }
+                        reused = SUCCEEDED(g_app.viewer.bitmap->CopyFromMemory(nullptr, buf, stride));
                 }
+                if (!reused)
                 {
                     D2D1_BITMAP_PROPERTIES props = D2D1::BitmapProperties(
                         D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED));
@@ -412,11 +418,8 @@ static LRESULT CALLBACK ViewerWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM
                     if (SUCCEEDED(g_app.viewer.deviceContext->CreateBitmap(
                         D2D1::SizeU(g_app.viewer.webpCanvasW, g_app.viewer.webpCanvasH),
                         buf, stride, props, bmp.GetAddressOf())))
-                    {
                         g_app.viewer.bitmap = bmp;
-                    }
                 }
-                anim_done:;
             }
         }
         else if (g_app.viewer.animType == ViewerState::AnimGif)
@@ -656,22 +659,24 @@ static bool GifDecodeNextFrame(ComPtr<ID2D1Bitmap>& outBmp, int& outDelay)
         lock->GetStride(&stride);
         lock->GetDataPointer(&bufSz, &pBuf);
 
+        bool reused = false;
         if (v.bitmap)
         {
             auto sz = v.bitmap->GetPixelSize();
             if (sz.width == v.gifCanvasW && sz.height == v.gifCanvasH)
-            {
-                if (SUCCEEDED(v.bitmap->CopyFromMemory(nullptr, pBuf, stride)))
-                { outBmp = v.bitmap; goto gif_post_disposal; }
-            }
+                reused = SUCCEEDED(v.bitmap->CopyFromMemory(nullptr, pBuf, stride));
         }
-        D2D1_BITMAP_PROPERTIES props = D2D1::BitmapProperties(
-            D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED));
-        if (FAILED(v.deviceContext->CreateBitmap(
-            D2D1::SizeU(v.gifCanvasW, v.gifCanvasH), pBuf, stride, props, outBmp.GetAddressOf()))) return false;
+        if (reused)
+            outBmp = v.bitmap;
+        else
+        {
+            D2D1_BITMAP_PROPERTIES props = D2D1::BitmapProperties(
+                D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED));
+            if (FAILED(v.deviceContext->CreateBitmap(
+                D2D1::SizeU(v.gifCanvasW, v.gifCanvasH), pBuf, stride, props, outBmp.GetAddressOf()))) return false;
+        }
     }
 
-gif_post_disposal:
     // disposal 処理
     if (disposal == 2)
     {
@@ -890,7 +895,7 @@ void ViewerStopAnimation()
     // WebP cleanup
     if (g_app.viewer.webpDecoder)
     {
-        WebPAnimDecoderDelete(static_cast<WebPAnimDecoder*>(g_app.viewer.webpDecoder));
+        DeleteWebPDecoder();
         g_app.viewer.webpDecoder = nullptr;
     }
     g_app.viewer.webpFileData.clear();

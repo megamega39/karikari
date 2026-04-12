@@ -210,13 +210,10 @@ static HRESULT DecodeFrameToWicBitmap(IWICBitmapSource* frame, IWICImagingFactor
     UINT imgW = 0, imgH = 0;
     frame->GetSize(&imgW, &imgH);
 
-    HWND hwndViewer = g_app.wnd.hwndViewer;
-    if (hwndViewer && imgW > 0 && imgH > 0)
+    if (imgW > 0 && imgH > 0)
     {
-        RECT rc;
-        GetClientRect(hwndViewer, &rc);
-        UINT viewW = rc.right - rc.left;
-        UINT viewH = rc.bottom - rc.top;
+        UINT viewW = g_app.viewer.cachedViewW.load(std::memory_order_relaxed);
+        UINT viewH = g_app.viewer.cachedViewH.load(std::memory_order_relaxed);
         if (viewW > 0 && viewH > 0 && imgW > viewW * 3 / 2 && imgH > viewH * 3 / 2)
         {
             float scale = std::min((float)viewW / imgW, (float)viewH / imgH);

@@ -485,7 +485,10 @@ static void PlayMediaFile(int index, const std::wstring& path)
                 std::wstring dir = std::wstring(tmp) + L"karikari_media\\";
                 CreateDirectoryW(dir.c_str(), nullptr);
                 std::wstring ext = PathFindExtensionW(entryPath.c_str());
-                std::wstring tmpFile = dir + L"media_tmp" + ext;
+                wchar_t tmpName[MAX_PATH];
+                GetTempFileNameW(dir.c_str(), L"km", 0, tmpName);
+                std::wstring tmpFile = std::wstring(tmpName) + ext;
+                DeleteFileW(tmpName); // GetTempFileNameW が作った空ファイルを削除
                 HANDLE hFile = CreateFileW(tmpFile.c_str(), GENERIC_WRITE, 0, nullptr,
                     CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
                 if (hFile != INVALID_HANDLE_VALUE)

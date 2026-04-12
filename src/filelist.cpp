@@ -513,11 +513,12 @@ static void ThumbWorkerFunc(PTP_CALLBACK_INSTANCE, PVOID ctx, PTP_WORK)
     if (g_thumbCancelFlag.load(std::memory_order_relaxed))
     { delete wi; return; }
 
-    CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+    HRESULT hrCom = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+    bool comInit = SUCCEEDED(hrCom);
     ComPtr<IWICImagingFactory> factory;
     CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER,
                      IID_PPV_ARGS(factory.GetAddressOf()));
-    if (!factory) { CoUninitialize(); delete wi; return; }
+    if (!factory) { if (comInit) CoUninitialize(); delete wi; return; }
 
     HBITMAP hbmp = nullptr;
     std::wstring arcPath, entryPath;
@@ -604,7 +605,7 @@ static void ThumbWorkerFunc(PTP_CALLBACK_INSTANCE, PVOID ctx, PTP_WORK)
     else if (hbmp)
         DeleteObject(hbmp);
 
-    CoUninitialize();
+    if (comInit) CoUninitialize();
     delete wi;
 }
 

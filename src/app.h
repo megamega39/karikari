@@ -8,6 +8,7 @@
 
 #include <windows.h>
 #include <commctrl.h>
+#include <atomic>
 #include <d2d1_1.h>
 #include <d3d11.h>
 #include <dxgi1_2.h>
@@ -158,6 +159,10 @@ struct ViewerState {
     UINT gifCanvasW = 0, gifCanvasH = 0;
     UINT gifFrameCount = 0;
     UINT gifCurrentFrame = 0;
+
+    // ワーカースレッドからのビューサイズ参照用（GetClientRect代替）
+    std::atomic<UINT> cachedViewW{0};
+    std::atomic<UINT> cachedViewH{0};
 
     float zoom = 1.0f;
     float scrollX = 0.0f;

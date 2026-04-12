@@ -263,6 +263,9 @@ void LayoutChildren(HWND hwndParent)
         {
             ShowWindow(g_app.wnd.hwndViewer, SW_SHOW);
             MoveWindow(g_app.wnd.hwndViewer, rightX, contentY, rightW, contentH, TRUE);
+            // ワーカースレッド用にビューサイズをキャッシュ（GetClientRect代替）
+            g_app.viewer.cachedViewW.store(rightW, std::memory_order_relaxed);
+            g_app.viewer.cachedViewH.store(contentH, std::memory_order_relaxed);
         }
     }
     LayoutViewerToolbarLabels();

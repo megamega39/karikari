@@ -75,9 +75,9 @@ void HandleCommand(HWND hwnd, UINT cmd)
         {
             LoadFolder(g_app.nav.currentFolder);
             PopulateListView();
-            if (GetTreeMode() == 0)
-                SelectTreePath(g_app.nav.currentFolder);
         }
+        RefreshTree();
+        RevealCurrentPath();
         break;
 
     // 履歴表示（トグル：もう一度押すと通常に戻る）

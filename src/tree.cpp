@@ -928,6 +928,49 @@ void SaveNormalTreeState()
     if (hRoot) CollectExpandedPaths(hwnd, hRoot, g_normalExpandedPaths);
 }
 
+void RefreshTree()
+{
+    HWND hwnd = g_app.wnd.hwndTree;
+    if (!hwnd) return;
+
+    if (g_treeMode == 1)
+    {
+        // 本棚モード: ShowBookshelfTreeが展開状態を自動保存/復元
+        ShowBookshelfTree();
+        return;
+    }
+    if (g_treeMode == 2) return; // 履歴モードはツリー不使用
+
+    // 通常モード: 展開状態+スクロール位置を保持して再構築
+    // 1. スクロール位置を保存
+    SCROLLINFO si = {}; si.cbSize = sizeof(si); si.fMask = SIF_POS;
+    GetScrollInfo(hwnd, SB_VERT, &si);
+    int scrollPos = si.nPos;
+
+    // 2. 展開パスを保存
+    std::unordered_set<std::wstring> expandedPaths;
+    HTREEITEM hRoot = (HTREEITEM)SendMessageW(hwnd, TVM_GETNEXTITEM, TVGN_ROOT, 0);
+    if (hRoot) CollectExpandedPaths(hwnd, hRoot, expandedPaths);
+
+    // 3. ツリーを再構築
+    SendMessageW(hwnd, WM_SETREDRAW, FALSE, 0);
+    InitFolderTree();
+
+    // 4. 展開パスを復元
+    hRoot = (HTREEITEM)SendMessageW(hwnd, TVM_GETNEXTITEM, TVGN_ROOT, 0);
+    if (hRoot && !expandedPaths.empty())
+        RestoreExpandedPaths(hwnd, hRoot, expandedPaths);
+
+    // 5. スクロール位置を復元
+    si.fMask = SIF_POS;
+    si.nPos = scrollPos;
+    SetScrollInfo(hwnd, SB_VERT, &si, FALSE);
+    SendMessageW(hwnd, WM_VSCROLL, MAKEWPARAM(SB_THUMBPOSITION, scrollPos), 0);
+
+    SendMessageW(hwnd, WM_SETREDRAW, TRUE, 0);
+    InvalidateRect(hwnd, nullptr, TRUE);
+}
+
 void ShowNormalTree()
 {
     if (g_treeMode == 0) return; // 既に通常モード

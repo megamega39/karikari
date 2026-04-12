@@ -70,6 +70,15 @@ bool LoadSettings(AppSettings& s)
     JsonGetBool(json, L"isRTL", s.isRTL);
     JsonGetInt(json, L"scaleMode", s.scaleMode);
 
+    // 設定値の範囲クランプ
+    s.prefetchCount = std::max(1, std::min(s.prefetchCount, 50));
+    s.thumbnailSize = std::max(48, std::min(s.thumbnailSize, 512));
+    s.previewSize = std::max(100, std::min(s.previewSize, 1024));
+    s.fontSize = std::max(6, std::min(s.fontSize, 24));
+    s.cacheSizeMB = std::max(50, std::min(s.cacheSizeMB, 2000));
+    s.viewMode = std::max(0, std::min(s.viewMode, 2));
+    s.scaleMode = std::max(0, std::min(s.scaleMode, 3));
+
     return true;
 }
 
