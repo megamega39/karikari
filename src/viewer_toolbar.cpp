@@ -14,16 +14,16 @@ struct ViewerImgDef {
 };
 
 static const ViewerImgDef kViewerImages[] = {
-    { L"|<",     false },  //  0: First
+    { L"\uE892", true  },  //  0: First (SkipBack)
     { L"\uE76B", true  },  //  1: Prev (ChevronLeft)
     { L"\uE76C", true  },  //  2: Next (ChevronRight)
-    { L">|",     false },  //  3: Last
+    { L"\uE893", true  },  //  3: Last (SkipForward)
     { L"\uE740", true  },  //  4: FitWindow (FullScreen)
     { L"W",      false },  //  5: FitWidth
     { L"H",      false },  //  6: FitHeight
     { L"1:1",    false },  //  7: Original
-    { L"+",      false },  //  8: ZoomIn
-    { L"\u2212", false },  //  9: ZoomOut (マイナス記号)
+    { L"\uE8A3", true  },  //  8: ZoomIn (ZoomIn icon)
+    { L"\uE71F", true  },  //  9: ZoomOut (ZoomOut icon)
     { L"A",      false },  // 10: Auto
     { L"1",      false },  // 11: Single
     { L"2",      false },  // 12: Spread
@@ -190,15 +190,16 @@ void CreateViewerToolbars(HWND parent, HINSTANCE hInst)
         { 0, IDM_VIEW_FIT_WIDTH,   5, 0 },
         { 0, IDM_VIEW_FIT_HEIGHT,  6, 0 },
         { 0, IDM_VIEW_ORIGINAL,    7, 0 },
-        { 2, 0,                    0, 60 },  // ズーム率
+        { 1, 0,                    0, 8 },
+        { 0, IDM_VIEW_BINDING,    13, 0 },
+        { 1, 0,                    0, 8 },
         { 0, IDM_VIEW_ZOOMIN,      8, 0 },
+        { 2, 0,                    0, 60 },  // ズーム率
         { 0, IDM_VIEW_ZOOMOUT,     9, 0 },
         { 1, 0,                    0, 8 },
         { 0, IDM_VIEW_AUTO,       10, 0 },
         { 0, IDM_VIEW_SINGLE,     11, 0 },
         { 0, IDM_VIEW_SPREAD,     12, 0 },
-        { 1, 0,                    0, 8 },
-        { 0, IDM_VIEW_BINDING,    13, 0 },
     };
     g_zoomLabelSepIndex = -1;
     HWND hRight = CreateToolbarBase(parent, hInst, IDC_VIEWER_TOOLBAR + 1, hil);
@@ -206,9 +207,16 @@ void CreateViewerToolbars(HWND parent, HINSTANCE hInst)
 
     g_app.wnd.hwndZoomLabel = CreateWindowExW(
         0, L"STATIC", L"100%",
-        WS_CHILD | WS_VISIBLE | SS_CENTER | SS_CENTERIMAGE,
-        0, 0, 60, 28, hRight, nullptr, hInst, nullptr);
+        WS_CHILD | WS_VISIBLE | SS_CENTER | SS_CENTERIMAGE | SS_NOTIFY,
+        0, 0, 60, 28, hRight, (HMENU)(UINT_PTR)IDM_VIEW_ZOOM_RESET, hInst, nullptr);
     SendMessageW(g_app.wnd.hwndZoomLabel, WM_SETFONT, (WPARAM)GetStockObject(DEFAULT_GUI_FONT), TRUE);
+    // クリックでズームリセット（STATICの親がツールバーなのでサブクラスで転送）
+    SetWindowSubclass(g_app.wnd.hwndZoomLabel, [](HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam,
+        UINT_PTR, DWORD_PTR) -> LRESULT {
+        if (msg == WM_LBUTTONUP)
+            SendMessageW(g_app.wnd.hwndMain, WM_COMMAND, IDM_VIEW_ZOOM_RESET, 0);
+        return DefSubclassProc(hwnd, msg, wParam, lParam);
+    }, 0, 0);
 
     g_app.wnd.hwndViewerTbRight = hRight;
 

@@ -34,7 +34,12 @@ add_executable(karikari WIN32
     src/karikari.manifest
 )
 
+# libwebp (WebPアニメーション対応)
+set(WEBP_DIR ${CMAKE_SOURCE_DIR}/third_party/libwebp/libwebp-1.5.0-windows-x64)
+target_include_directories(karikari PRIVATE ${WEBP_DIR}/include)
 target_link_libraries(karikari PRIVATE
+    ${WEBP_DIR}/lib/libwebpdemux.lib
+    ${WEBP_DIR}/lib/libwebp.lib
     d2d1
     d3d11
     dxgi
@@ -61,3 +66,10 @@ if(MSVC)
     target_compile_options(karikari PRIVATE $<$<CONFIG:Release>:/GL>)
     target_link_options(karikari PRIVATE $<$<CONFIG:Release>:/LTCG>)
 endif()
+
+# ビルド後にDLLをexe横にコピー（クリーンビルドでも自動配置）
+add_custom_command(TARGET karikari POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${CMAKE_SOURCE_DIR}/third_party/libmpv-2.dll"
+        "$<TARGET_FILE_DIR:karikari>/libmpv-2.dll"
+)

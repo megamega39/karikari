@@ -95,7 +95,15 @@ void LayoutChildren(HWND hwndParent)
     // ナビバー
     if (g_app.wnd.hwndNavBar)
     {
-        MoveWindow(g_app.wnd.hwndNavBar, 0, y, clientW, kNavBarH, TRUE);
+        int rightW = 0;
+        if (g_app.wnd.hwndNavBarRight)
+        {
+            // 右ツールバーのボタン数×ボタン幅
+            int btnCount = (int)SendMessageW(g_app.wnd.hwndNavBarRight, TB_BUTTONCOUNT, 0, 0);
+            rightW = btnCount * 48;
+            MoveWindow(g_app.wnd.hwndNavBarRight, clientW - rightW, y, rightW, kNavBarH, TRUE);
+        }
+        MoveWindow(g_app.wnd.hwndNavBar, 0, y, clientW - rightW, kNavBarH, TRUE);
         y += kNavBarH;
     }
 
@@ -159,11 +167,16 @@ void LayoutChildren(HWND hwndParent)
         MoveWindow(g_app.wnd.hwndSidebarSplitter, 0, mainY + folderLabelH + treeH, leftW, kSplitterW, TRUE);
 
     int filterH = 24;
+    int sbW = GetSystemMetrics(SM_CXVSCROLL);
     if (g_app.wnd.hwndFilterBox)
-        MoveWindow(g_app.wnd.hwndFilterBox, 0, mainY + listY, leftW, filterH, TRUE);
+        MoveWindow(g_app.wnd.hwndFilterBox, 0, mainY + listY, leftW - sbW, filterH, TRUE);
 
     if (g_app.wnd.hwndList)
+    {
         MoveWindow(g_app.wnd.hwndList, 0, mainY + listY + filterH, leftW, listH - filterH, TRUE);
+        // グリッドモード: リサイズ時にアイコンを再配置
+        SendMessageW(g_app.wnd.hwndList, LVM_ARRANGE, LVA_DEFAULT, 0);
+    }
 
     // 履歴モード: ツリー部分を履歴ツールバー+履歴ListViewに置き換え（ファイルリストは残す）
     if (g_app.wnd.hwndHistoryToolbar && IsWindowVisible(g_app.wnd.hwndHistoryToolbar))
@@ -792,6 +805,7 @@ static LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
         HINSTANCE hInst = ((LPCREATESTRUCT)lParam)->hInstance;
 
         CreateNavBar(hwnd, hInst);
+        CreateNavBarRight(hwnd, hInst);
         // 本棚・履歴・ホバーボタンをチェック可能に（モード中ハイライト）
         for (UINT cmd : { IDM_NAV_HOVER, IDM_NAV_BOOKSHELF, IDM_NAV_HISTORY })
         {
@@ -1558,6 +1572,14 @@ HWND CreateMainWindow(HINSTANCE hInst, int nCmdShow)
         ShowWindow(hwnd, SW_SHOWMAXIMIZED);
     else
         ShowWindow(hwnd, nCmdShow);
+
+    // スプリッター位置を再適用（WM_SIZE でクランプされた可能性があるため）
+    if (hasSettings)
+    {
+        g_app.mainSplitPos = settings.mainSplitPos;
+        g_app.sidebarSplitPos = settings.sidebarSplitPos;
+        LayoutChildren(hwnd);
+    }
 
     // Step 2: キャッシュ画像を即座に表示（書庫Open不要、~50ms）
     {

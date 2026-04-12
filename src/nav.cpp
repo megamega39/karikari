@@ -5,6 +5,7 @@
 #include "fswatcher.h"
 #include <unordered_set>
 #include <atomic>
+#include <sstream>
 #include "viewer.h"
 #include "addressbar.h"
 #include "statusbar.h"
@@ -335,7 +336,7 @@ void NavigateTo(const std::wstring& path, NavigateOptions opts)
         if (work) SubmitThreadpoolWork(work);
         else delete resultPtr;
     }
-    else if (IsImageFile(path))
+    else if (IsImageFile(path) || IsMediaFile(path))
     {
         g_app.nav.inArchiveMode = false;
         g_app.nav.currentArchive.clear();
@@ -473,8 +474,28 @@ static void PlayMediaFile(int index, const std::wstring& path)
         if (ExtractSmart(arcPath, entryPath, fileSize, buf, tempPath))
         {
             if (!tempPath.empty())
+            {
                 MediaPlay(tempPath);
-            // buf にデータがある場合はメモリ展開のみ（メディア再生は非対応）
+            }
+            else if (!buf.empty())
+            {
+                // メモリ展開された場合: テンポラリファイルに書き出して再生
+                wchar_t tmp[MAX_PATH];
+                GetTempPathW(MAX_PATH, tmp);
+                std::wstring dir = std::wstring(tmp) + L"karikari_media\\";
+                CreateDirectoryW(dir.c_str(), nullptr);
+                std::wstring ext = PathFindExtensionW(entryPath.c_str());
+                std::wstring tmpFile = dir + L"media_tmp" + ext;
+                HANDLE hFile = CreateFileW(tmpFile.c_str(), GENERIC_WRITE, 0, nullptr,
+                    CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+                if (hFile != INVALID_HANDLE_VALUE)
+                {
+                    DWORD written;
+                    WriteFile(hFile, buf.data(), (DWORD)buf.size(), &written, nullptr);
+                    CloseHandle(hFile);
+                    MediaPlay(tmpFile);
+                }
+            }
         }
     }
     else
@@ -712,5 +733,53 @@ void ApplyArchiveLoadResult(ArchiveLoadResult* result)
     {
         PrefetchStart(0, 1);
         GoToFile(0);
+    }
+}
+
+// === 戻る/進む履歴の永続化 ===
+
+static std::wstring GetNavHistoryPath()
+{
+    wchar_t path[MAX_PATH];
+    GetModuleFileNameW(nullptr, path, MAX_PATH);
+    PathRemoveFileSpecW(path);
+    PathAppendW(path, L"nav_history.txt");
+    return path;
+}
+
+void NavHistorySave()
+{
+    constexpr int kMaxEntries = 20;
+    std::wstring data;
+    data += L"[back]\n";
+    auto& back = g_app.nav.historyBack;
+    int startB = (int)back.size() > kMaxEntries ? (int)back.size() - kMaxEntries : 0;
+    for (int i = startB; i < (int)back.size(); i++)
+        data += back[i] + L"\n";
+    data += L"[forward]\n";
+    auto& fwd = g_app.nav.historyForward;
+    int startF = (int)fwd.size() > kMaxEntries ? (int)fwd.size() - kMaxEntries : 0;
+    for (int i = startF; i < (int)fwd.size(); i++)
+        data += fwd[i] + L"\n";
+    WriteWStringToFile(GetNavHistoryPath(), data);
+}
+
+void NavHistoryLoad()
+{
+    std::wstring data = ReadFileToWString(GetNavHistoryPath());
+    if (data.empty()) return;
+
+    std::wistringstream iss(data);
+    std::wstring line;
+    int section = -1; // 0=back, 1=forward
+    while (std::getline(iss, line))
+    {
+        if (!line.empty() && line.back() == L'\r')
+            line.pop_back();
+        if (line == L"[back]") { section = 0; continue; }
+        if (line == L"[forward]") { section = 1; continue; }
+        if (line.empty()) continue;
+        if (section == 0) g_app.nav.historyBack.push_back(line);
+        else if (section == 1) g_app.nav.historyForward.push_back(line);
     }
 }

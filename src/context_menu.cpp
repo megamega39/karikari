@@ -196,13 +196,15 @@ void ShowFileContextMenu(HWND hwnd, const std::wstring& path, POINT pt)
         AppendMenuW(hShelfMenu, MF_STRING, CTX_SHELF_BASE + i, cats[i].name.c_str());
     if (!cats.empty())
         AppendMenuW(hShelfMenu, MF_SEPARATOR, 0, nullptr);
-    AppendMenuW(hShelfMenu, MF_STRING, CTX_SHELF_NEW, L"新しいカテゴリを作成...");
-    AppendMenuW(hMenu, MF_POPUP, (UINT_PTR)hShelfMenu, L"本棚に追加");
-
-    // フォルダの場合:「カテゴリとして追加」（フォルダ名でカテゴリ作成→中身を一括登録）
+    AppendMenuW(hShelfMenu, MF_STRING, CTX_SHELF_NEW, L"新しい本棚を作成...");
+    // フォルダの場合:「フォルダを本棚として追加」（フォルダ名で本棚作成→配下の書庫も追加）
     DWORD pathAttr = GetFileAttributesW(path.c_str());
     if (pathAttr != INVALID_FILE_ATTRIBUTES && (pathAttr & FILE_ATTRIBUTE_DIRECTORY))
-        AppendMenuW(hMenu, MF_STRING, CTX_SHELF_AS_CAT, L"カテゴリとして追加");
+    {
+        AppendMenuW(hShelfMenu, MF_SEPARATOR, 0, nullptr);
+        AppendMenuW(hShelfMenu, MF_STRING, CTX_SHELF_AS_CAT, L"フォルダを本棚として追加");
+    }
+    AppendMenuW(hMenu, MF_POPUP, (UINT_PTR)hShelfMenu, L"本棚に追加");
 
     // 本棚から解除（本棚に含まれている場合）
     if (BookshelfContains(path))
@@ -222,9 +224,9 @@ void ShowFileContextMenu(HWND hwnd, const std::wstring& path, POINT pt)
     else if (cmd == CTX_REMOVE_SHELF) { BookshelfRemoveItem(path); if (GetTreeMode() == 1) ShowBookshelfTree(); }
     else if (cmd == CTX_SHELF_NEW)
     {
-        // 新しいカテゴリを作成して追加（名前入力ダイアログ）
+        // 新しい本棚を作成して追加
         wchar_t buf[256] = {};
-        if (ShowInputDialog(hwnd, L"新しいカテゴリを作成", L"カテゴリ名を入力してください:", buf, 256, L""))
+        if (ShowInputDialog(hwnd, L"新しい本棚を作成", L"本棚名を入力してください:", buf, 256, L""))
         {
             auto& cat = BookshelfAddCategory(buf);
             BookshelfAddItem(cat.id, fileName, path);
@@ -233,7 +235,7 @@ void ShowFileContextMenu(HWND hwnd, const std::wstring& path, POINT pt)
     }
     else if (cmd == CTX_SHELF_AS_CAT)
     {
-        // フォルダをカテゴリとして追加（フォルダ名でカテゴリ作成→中身を一括登録）
+        // フォルダを本棚として追加（フォルダ名で本棚作成→配下の書庫も追加）
         auto& cat = BookshelfAddCategory(fileName);
         std::wstring searchPath = path;
         if (!searchPath.empty() && searchPath.back() != L'\\') searchPath += L'\\';

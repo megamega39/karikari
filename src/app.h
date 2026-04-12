@@ -67,6 +67,7 @@ enum ViewerCommand : UINT {
     IDM_VIEW_SPREAD,
     IDM_VIEW_AUTO,
     IDM_VIEW_BINDING,
+    IDM_VIEW_ZOOM_RESET,
 };
 
 // 履歴ドロップダウンメニューID
@@ -99,6 +100,7 @@ struct FileItem {
 struct WindowHandles {
     HWND hwndMain = nullptr;
     HWND hwndNavBar = nullptr;
+    HWND hwndNavBarRight = nullptr;
     HWND hwndAddressLabel = nullptr;
     HWND hwndAddressEdit = nullptr;
     HWND hwndFolderLabel = nullptr;   // 「フォルダ」ラベル
@@ -136,6 +138,21 @@ struct ViewerState {
     int animCurrentFrame = 0;
     UINT_PTR animTimer = 0;
     bool isAnimating = false;
+
+    // WebPアニメーション ストリーミング用（libwebp）
+    enum AnimType { AnimNone, AnimGif, AnimWebP } animType = AnimNone;
+    void* webpDecoder = nullptr;       // WebPAnimDecoder*
+    std::vector<BYTE> webpFileData;    // WebPファイル全体のバッファ
+    UINT webpCanvasW = 0, webpCanvasH = 0;
+    int webpPrevTimestamp = 0;
+
+    // GIFストリーミング用
+    ComPtr<IWICBitmapDecoder> gifDecoder;
+    ComPtr<IWICBitmap> gifCanvas;      // 合成キャンバス
+    ComPtr<IWICBitmap> gifPrevCanvas;  // disposal=3 用バックアップ
+    UINT gifCanvasW = 0, gifCanvasH = 0;
+    UINT gifFrameCount = 0;
+    UINT gifCurrentFrame = 0;
 
     float zoom = 1.0f;
     float scrollX = 0.0f;

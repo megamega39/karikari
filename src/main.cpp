@@ -4,6 +4,7 @@
 #include "splitter.h"
 #include "archive.h"
 #include "history.h"
+#include "nav.h"
 #include "cache.h"
 #include "prefetch.h"
 #include "media.h"
@@ -58,6 +59,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int nCmdShow)
     LoadKeyBindings(); // ショートカットキー読み込み（デフォルト初期化含む）
     InitArchive();
     HistoryLoad();
+    NavHistoryLoad();
     FavoritesLoad();
     BookshelfLoad();
     // MediaInit は遅延初期化（libmpv-2.dll 112MB の LoadLibrary が重いため）
@@ -86,6 +88,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int nCmdShow)
     CleanupTempFiles();
     FavoritesSave();
     HistorySave();
+    NavHistorySave();
     CacheClear();
     CloseArchive();
     // bitmap/deviceContext は WM_DESTROY で解放済み。残りのリソースをここで解放

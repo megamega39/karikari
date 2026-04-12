@@ -82,9 +82,9 @@ void HandleCommand(HWND hwnd, UINT cmd)
         ShowWindow(g_app.wnd.hwndSidebarSplitter, SW_SHOW);
         ShowWindow(g_app.wnd.hwndFilterBox, SW_SHOW);
         ShowWindow(g_app.wnd.hwndList, SW_SHOW);
-        g_historyFilterText.clear();
+        // フィルターテキストを保持（モード切替で消さない）
         if (g_app.wnd.hwndHistoryFilter)
-            SetWindowTextW(g_app.wnd.hwndHistoryFilter, L"");
+            SetWindowTextW(g_app.wnd.hwndHistoryFilter, g_historyFilterText.c_str());
         BuildHistoryList();
         LayoutChildren(hwnd);
         UpdateAddressBar(L"履歴");
@@ -156,6 +156,11 @@ void HandleCommand(HWND hwnd, UINT cmd)
     // ビューアー - ズーム
     case IDM_VIEW_ZOOMIN:  ViewerZoomIn(); break;
     case IDM_VIEW_ZOOMOUT: ViewerZoomOut(); break;
+    case IDM_VIEW_ZOOM_RESET:
+        g_app.viewer.zoom = 1.0f;
+        InvalidateRect(g_app.wnd.hwndViewer, nullptr, FALSE);
+        UpdateZoomLabel();
+        break;
 
     // ビューアー - 表示モード
     case IDM_VIEW_AUTO:    ViewerSetViewMode(0); break;

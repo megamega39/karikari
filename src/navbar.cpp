@@ -18,7 +18,10 @@ static const NavButtonDef kNavButtons[] = {
     { 0, nullptr, nullptr }, // セパレータ
     { IDM_NAV_LIST,      L"\uE8FD", L"リスト表示" },
     { IDM_NAV_GRID,      L"\uE80A", L"グリッド表示" },
-    { 0, nullptr, nullptr }, // セパレータ
+};
+
+// 右端に配置するボタン
+static const NavButtonDef kNavButtonsRight[] = {
     { IDM_NAV_SETTINGS,  L"\uE713", L"設定" },
     { IDM_NAV_HELP,      L"\uE897", L"ヘルプ" },
 };
@@ -206,5 +209,80 @@ HWND CreateNavBar(HWND parent, HINSTANCE hInst)
     SendMessageW(hwnd, TB_AUTOSIZE, 0, 0);
 
     g_app.wnd.hwndNavBar = hwnd;
+    return hwnd;
+}
+
+static HIMAGELIST CreateRightIconImageList(int cx, int cy)
+{
+    HIMAGELIST cached = LoadImageListCache(L"navbar_right.cache");
+    if (cached && ImageList_GetImageCount(cached) > 0) return cached;
+    if (cached) ImageList_Destroy(cached);
+
+    HIMAGELIST hil = ImageList_Create(cx, cy, ILC_COLOR32, 4, 2);
+    HFONT hFont = CreateFontW(24, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+        DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+        ANTIALIASED_QUALITY, DEFAULT_PITCH, L"Segoe Fluent Icons");
+    if (!hFont)
+        hFont = CreateFontW(24, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+            DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+            ANTIALIASED_QUALITY, DEFAULT_PITCH, L"Segoe MDL2 Assets");
+
+    HDC hdcScreen = GetDC(nullptr);
+    HDC hdcMem = CreateCompatibleDC(hdcScreen);
+    for (auto& btn : kNavButtonsRight)
+    {
+        BITMAPINFO bmi = {};
+        bmi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+        bmi.bmiHeader.biWidth = cx;
+        bmi.bmiHeader.biHeight = -cy;
+        bmi.bmiHeader.biPlanes = 1;
+        bmi.bmiHeader.biBitCount = 32;
+        bmi.bmiHeader.biCompression = BI_RGB;
+        void* pBits = nullptr;
+        HBITMAP hbmp = CreateDIBSection(hdcMem, &bmi, DIB_RGB_COLORS, &pBits, nullptr, 0);
+        HBITMAP hOld = (HBITMAP)SelectObject(hdcMem, hbmp);
+        RenderTextToBitmap(hdcMem, hFont, btn.icon, 1, cx, cy, pBits, 50, 50, 50);
+        SelectObject(hdcMem, hOld);
+        ImageList_Add(hil, hbmp, nullptr);
+        DeleteObject(hbmp);
+    }
+    DeleteDC(hdcMem);
+    ReleaseDC(nullptr, hdcScreen);
+    DeleteObject(hFont);
+    SaveImageListCache(hil, L"navbar_right.cache");
+    return hil;
+}
+
+HWND CreateNavBarRight(HWND parent, HINSTANCE hInst)
+{
+    HWND hwnd = CreateWindowExW(
+        0, TOOLBARCLASSNAMEW, nullptr,
+        WS_CHILD | WS_VISIBLE | TBSTYLE_FLAT | TBSTYLE_LIST | TBSTYLE_TOOLTIPS
+        | CCS_NODIVIDER | CCS_NOPARENTALIGN | CCS_NORESIZE,
+        0, 0, 0, 0,
+        parent, (HMENU)(UINT_PTR)(IDC_NAVBAR + 1), hInst, nullptr);
+
+    if (!hwnd) return nullptr;
+
+    SendMessageW(hwnd, TB_BUTTONSTRUCTSIZE, sizeof(TBBUTTON), 0);
+
+    HIMAGELIST hil = CreateRightIconImageList(32, 32);
+    SendMessageW(hwnd, TB_SETIMAGELIST, 0, (LPARAM)hil);
+
+    int imgIndex = 0;
+    for (auto& def : kNavButtonsRight)
+    {
+        TBBUTTON tb = {};
+        tb.iBitmap = imgIndex++;
+        tb.idCommand = def.cmd;
+        tb.fsState = TBSTATE_ENABLED;
+        tb.fsStyle = BTNS_BUTTON;
+        SendMessageW(hwnd, TB_ADDBUTTONS, 1, (LPARAM)&tb);
+    }
+
+    SendMessageW(hwnd, TB_SETBUTTONSIZE, 0, MAKELONG(48, 48));
+    SendMessageW(hwnd, TB_AUTOSIZE, 0, 0);
+
+    g_app.wnd.hwndNavBarRight = hwnd;
     return hwnd;
 }

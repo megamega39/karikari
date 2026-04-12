@@ -706,6 +706,10 @@ void SwitchToGridView()
 
     SendMessageW(hwnd, LVM_SETIMAGELIST, LVSIL_NORMAL, (LPARAM)g_thumbImageList);
 
+    // アイコン間隔を設定（サムネイルサイズ + テキスト余白）
+    int spacing = kThumbSize + 20;
+    SendMessageW(hwnd, LVM_SETICONSPACING, 0, MAKELPARAM(spacing, spacing + 24));
+
     // 全アイテムをデフォルトアイコンで即座に挿入
     SendMessageW(hwnd, WM_SETREDRAW, FALSE, 0);
     int count = (int)g_app.nav.fileItems.size();

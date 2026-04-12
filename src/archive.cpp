@@ -249,7 +249,7 @@ public:
 };
 
 // === メモリ出力ストリーム ===
-static constexpr size_t kMaxExtractBytes = 256ULL * 1024 * 1024; // 256MB 展開上限
+static constexpr size_t kMaxExtractBytes = 2ULL * 1024 * 1024 * 1024; // 2GB 展開上限
 
 class MemoryOutStream : public ISequentialOutStream {
     LONG refCount_ = 1;
@@ -311,6 +311,60 @@ public:
     STDMETHOD(GetStream)(UInt32, ISequentialOutStream** outStream, Int32 askExtractMode) override {
         if (askExtractMode != 0) { *outStream = nullptr; return S_OK; }
         *outStream = new MemoryOutStream(buffer_);
+        return S_OK;
+    }
+    STDMETHOD(PrepareOperation)(Int32) override { return S_OK; }
+    STDMETHOD(SetOperationResult)(Int32) override { return S_OK; }
+};
+
+// === ファイル出力ストリーム（大ファイルをテンプファイルに直接展開） ===
+class FileOutStream : public ISequentialOutStream {
+    LONG refCount_ = 1;
+    HANDLE hFile_;
+public:
+    FileOutStream(HANDLE h) : hFile_(h) {}
+    STDMETHOD(QueryInterface)(REFIID iid, void** ppv) override {
+        if (iid == __uuidof(IUnknown) || iid == __uuidof(ISequentialOutStream)) {
+            *ppv = static_cast<ISequentialOutStream*>(this); AddRef(); return S_OK;
+        }
+        *ppv = nullptr; return E_NOINTERFACE;
+    }
+    STDMETHOD_(ULONG, AddRef)() override { return InterlockedIncrement(&refCount_); }
+    STDMETHOD_(ULONG, Release)() override {
+        LONG r = InterlockedDecrement(&refCount_);
+        if (r == 0) delete this;
+        return r;
+    }
+    STDMETHOD(Write)(const void* data, UInt32 size, UInt32* processedSize) override {
+        DWORD written = 0;
+        BOOL ok = WriteFile(hFile_, data, size, &written, nullptr);
+        if (processedSize) *processedSize = written;
+        return ok ? S_OK : E_FAIL;
+    }
+};
+
+class FileExtractCallback : public IArchiveExtractCallback {
+    LONG refCount_ = 1;
+    HANDLE hFile_;
+public:
+    FileExtractCallback(HANDLE h) : hFile_(h) {}
+    STDMETHOD(QueryInterface)(REFIID iid, void** ppv) override {
+        if (iid == __uuidof(IUnknown) || iid == __uuidof(IProgress) || iid == __uuidof(IArchiveExtractCallback)) {
+            *ppv = static_cast<IArchiveExtractCallback*>(this); AddRef(); return S_OK;
+        }
+        *ppv = nullptr; return E_NOINTERFACE;
+    }
+    STDMETHOD_(ULONG, AddRef)() override { return InterlockedIncrement(&refCount_); }
+    STDMETHOD_(ULONG, Release)() override {
+        LONG r = InterlockedDecrement(&refCount_);
+        if (r == 0) delete this;
+        return r;
+    }
+    STDMETHOD(SetTotal)(UInt64) override { return S_OK; }
+    STDMETHOD(SetCompleted)(const UInt64*) override { return S_OK; }
+    STDMETHOD(GetStream)(UInt32, ISequentialOutStream** outStream, Int32 askExtractMode) override {
+        if (askExtractMode != 0) { *outStream = nullptr; return S_OK; }
+        *outStream = new FileOutStream(hFile_);
         return S_OK;
     }
     STDMETHOD(PrepareOperation)(Int32) override { return S_OK; }
@@ -650,38 +704,59 @@ bool ExtractSmart(const std::wstring& archivePath,
         return ExtractToMemory(archivePath, entryPath, buffer);
     }
 
-    // 大ファイル → テンポラリに展開
-    if (!ExtractToMemory(archivePath, entryPath, buffer))
-        return false;
-
-    // 拡張子を保持してテンポラリファイルに書き出し
+    // 大ファイル → 7zからテンポラリファイルに直接展開（メモリ節約）
     std::wstring ext;
     auto dotPos = entryPath.rfind(L'.');
     if (dotPos != std::wstring::npos) ext = entryPath.substr(dotPos);
 
     wchar_t tmpFile[MAX_PATH];
     GetTempFileNameW(GetTempDir().c_str(), L"kk", 0, tmpFile);
-
-    // GetTempFileName は .tmp を作るのでリネーム
     std::wstring finalPath = std::wstring(tmpFile) + ext;
-    DeleteFileW(finalPath.c_str()); // 既存を削除
+    DeleteFileW(finalPath.c_str());
     MoveFileW(tmpFile, finalPath.c_str());
 
     HANDLE hFile = CreateFileW(finalPath.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, 0, nullptr);
     if (hFile == INVALID_HANDLE_VALUE)
     {
-        // 書き込み失敗 → メモリのまま返す
+        // テンプ作成失敗 → メモリ展開にフォールバック
+        return ExtractToMemory(archivePath, entryPath, buffer);
+    }
+
+    // 7zから直接ファイルに展開
+    bool ok = false;
+    {
+        std::unique_lock<std::timed_mutex> lock(g_archiveMutex, std::defer_lock);
+        if (GetCurrentThreadId() == g_mainThreadId)
+            lock.lock();
+        else
+            if (!lock.try_lock_for(std::chrono::seconds(5))) { CloseHandle(hFile); DeleteFileW(finalPath.c_str()); return false; }
+
+        IInArchive* archive = GetCachedArchive(archivePath);
+        if (archive && g_currentHandle)
+        {
+            std::wstring key = entryPath;
+            NormalizePathInPlace(key);
+            auto it = g_currentHandle->entryIndexMap.find(key);
+            if (it != g_currentHandle->entryIndexMap.end())
+            {
+                UInt32 idx = it->second;
+                auto* cb = new FileExtractCallback(hFile);
+                ok = SUCCEEDED(archive->Extract(&idx, 1, 0, cb));
+                cb->Release();
+            }
+        }
+    }
+    CloseHandle(hFile);
+
+    if (ok)
+    {
+        { std::lock_guard<std::mutex> lk(g_tempFilesMutex); g_tempFiles.push_back(finalPath); }
+        tempPath = finalPath;
         return true;
     }
 
-    DWORD written;
-    WriteFile(hFile, buffer.data(), (DWORD)buffer.size(), &written, nullptr);
-    CloseHandle(hFile);
-
-    { std::lock_guard<std::mutex> lock(g_tempFilesMutex); g_tempFiles.push_back(finalPath); }
-    tempPath = finalPath;
-    buffer.clear(); // メモリ解放
-    return true;
+    DeleteFileW(finalPath.c_str());
+    return false;
 }
 
 void CleanupTempFiles()
