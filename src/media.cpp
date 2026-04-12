@@ -3,6 +3,7 @@
 #include "statusbar.h"
 #include "nav.h"
 #include "window.h"
+#include "settings.h"
 #include <cmath>
 #include <mfapi.h>
 #include <mfidl.h>
@@ -110,6 +111,28 @@ static double g_volume = 1.0;
 static bool g_muted = false;
 static double g_volumeBeforeMute = 1.0;
 static bool g_seekDragging = false;
+static int g_hoverBtn = 0; // 0=none, 1=loop, 2=autoplay, 3=vol
+static HWND g_tooltip = nullptr;
+static void GetLoopBtnRect(HWND h, RECT& o);
+static void GetAutoPlayBtnRect(HWND h, RECT& o);
+
+static void CreateControlBarTooltip(HWND hwndParent, HINSTANCE hInst)
+{
+    g_tooltip = CreateWindowExW(WS_EX_TOPMOST, TOOLTIPS_CLASSW, nullptr,
+        WS_POPUP | TTS_ALWAYSTIP | TTS_NOPREFIX,
+        CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT,
+        hwndParent, nullptr, hInst, nullptr);
+    if (!g_tooltip) return;
+
+    // IDベースのツール（RECT不要、TTN_GETDISPINFOで動的に返す）
+    TOOLINFOW ti = {}; ti.cbSize = sizeof(ti);
+    ti.uFlags = TTF_IDISHWND;
+    ti.hwnd = hwndParent;
+    ti.uId = (UINT_PTR)hwndParent;
+    ti.lpszText = LPSTR_TEXTCALLBACKW;
+    SendMessageW(g_tooltip, TTM_ADDTOOLW, 0, (LPARAM)&ti);
+    SendMessageW(g_tooltip, TTM_SETDELAYTIME, TTDT_INITIAL, 300);
+}
 static std::wstring g_currentMediaPath;
 static constexpr int kControlBarH = 40;
 
@@ -214,11 +237,12 @@ static std::wstring FormatTime(double s) {
     return b;
 }
 
-// 右端から: [音量バー90px][gap2][🔊20px][gap2][🔁30px][gap4][時間110px][シークバー]
-static void GetSeekBarRect(HWND h, RECT& o) { RECT r; GetClientRect(h,&r); o={44,14,r.right-280,26}; }
+// 右端から: [音量バー90px][gap2][🔊20px][gap8][🔁32px][gap8][A32px][gap4][時間110px][シークバー]
+static void GetSeekBarRect(HWND h, RECT& o) { RECT r; GetClientRect(h,&r); o={44,14,r.right-326,26}; }
 static void GetVolumeBarRect(HWND h, RECT& o) { RECT r; GetClientRect(h,&r); o={r.right-98,16,r.right-8,24}; }
 static void GetVolIconRect(HWND h, RECT& o) { RECT r; GetClientRect(h,&r); o={r.right-120,4,r.right-100,36}; }
-static void GetLoopBtnRect(HWND h, RECT& o) { RECT r; GetClientRect(h,&r); o={r.right-154,4,r.right-122,36}; }
+static void GetLoopBtnRect(HWND h, RECT& o) { RECT r; GetClientRect(h,&r); o={r.right-160,4,r.right-128,36}; }
+static void GetAutoPlayBtnRect(HWND h, RECT& o) { RECT r; GetClientRect(h,&r); o={r.right-200,4,r.right-168,36}; }
 
 // GDI ブラシキャッシュ（MediaInit で作成）
 static HBRUSH g_brDark   = nullptr;
@@ -236,7 +260,14 @@ static void PaintControlBar(HWND hwnd, HDC hdc) {
 
     double pos = MediaGetPosition(), dur = MediaGetDuration();
     RECT btn = {8,4,38,36};
-    DrawTextW(hdc, g_isPlaying?L"\u23F8":L"\u25B6",-1,&btn,DT_CENTER|DT_VCENTER|DT_SINGLELINE);
+    {
+        static HFONT hBtnFont = CreateFontW(-18, 0, 0, 0, FW_NORMAL, 0, 0, 0,
+            DEFAULT_CHARSET, 0, 0, CLEARTYPE_QUALITY, 0, L"Segoe Fluent Icons");
+        HFONT hPrev = hBtnFont ? (HFONT)SelectObject(hdc, hBtnFont) : nullptr;
+        // E769=Pause, E768=Play (Segoe Fluent Icons、枠なし)
+        DrawTextW(hdc, g_isPlaying ? L"\uE769" : L"\uE768", -1, &btn, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+        if (hPrev) SelectObject(hdc, hPrev);
+    }
 
     RECT sr; GetSeekBarRect(hwnd, sr);
     if (sr.right > sr.left+10) {
@@ -252,18 +283,26 @@ static void PaintControlBar(HWND hwnd, HDC hdc) {
 
     // ループボタン（Segoe Fluent Icons、大きめ表示 + オン時は背景色付き）
     RECT lr; GetLoopBtnRect(hwnd, lr);
-    if (g_isLoop)
     {
-        // オン時: 青背景 + 白アイコン
-        HBRUSH hBg = CreateSolidBrush(RGB(66, 133, 244));
         RECT bgRect = { lr.left - 2, lr.top + 4, lr.right + 2, lr.bottom - 4 };
-        FillRect(hdc, &bgRect, hBg);
-        DeleteObject(hBg);
-        SetTextColor(hdc, RGB(255, 255, 255));
-    }
-    else
-    {
-        SetTextColor(hdc, RGB(160, 160, 160));
+        if (g_isLoop)
+        {
+            HBRUSH hBg = CreateSolidBrush(RGB(66, 133, 244));
+            FillRect(hdc, &bgRect, hBg);
+            DeleteObject(hBg);
+            SetTextColor(hdc, RGB(255, 255, 255));
+        }
+        else if (g_hoverBtn == 1)
+        {
+            HBRUSH hBg = CreateSolidBrush(RGB(70, 70, 70));
+            FillRect(hdc, &bgRect, hBg);
+            DeleteObject(hBg);
+            SetTextColor(hdc, RGB(220, 220, 220));
+        }
+        else
+        {
+            SetTextColor(hdc, RGB(160, 160, 160));
+        }
     }
     {
         static HFONT hLoopFont = CreateFontW(-16, 0, 0, 0, FW_NORMAL, 0, 0, 0,
@@ -271,6 +310,37 @@ static void PaintControlBar(HWND hwnd, HDC hdc) {
         HFONT hPrev = hLoopFont ? (HFONT)SelectObject(hdc, hLoopFont) : nullptr;
         // U+E8EE = RepeatAll アイコン
         DrawTextW(hdc, L"\uE8EE", -1, &lr, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+        if (hPrev) SelectObject(hdc, hPrev);
+    }
+    SetTextColor(hdc, RGB(220, 220, 220));
+
+    // 自動再生ボタン
+    RECT ar; GetAutoPlayBtnRect(hwnd, ar);
+    {
+        bool autoPlay = GetCachedSettings().autoPlayMedia;
+        RECT bgRect = { ar.left - 2, ar.top + 4, ar.right + 2, ar.bottom - 4 };
+        if (autoPlay)
+        {
+            HBRUSH hBg = CreateSolidBrush(RGB(66, 133, 244));
+            FillRect(hdc, &bgRect, hBg);
+            DeleteObject(hBg);
+            SetTextColor(hdc, RGB(255, 255, 255));
+        }
+        else if (g_hoverBtn == 2)
+        {
+            HBRUSH hBg = CreateSolidBrush(RGB(70, 70, 70));
+            FillRect(hdc, &bgRect, hBg);
+            DeleteObject(hBg);
+            SetTextColor(hdc, RGB(220, 220, 220));
+        }
+        else
+        {
+            SetTextColor(hdc, RGB(160, 160, 160));
+        }
+        static HFONT hAFont = CreateFontW(-14, 0, 0, 0, FW_BOLD, 0, 0, 0,
+            DEFAULT_CHARSET, 0, 0, CLEARTYPE_QUALITY, 0, L"Segoe UI");
+        HFONT hPrev = hAFont ? (HFONT)SelectObject(hdc, hAFont) : nullptr;
+        DrawTextW(hdc, L"A", -1, &ar, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
         if (hPrev) SelectObject(hdc, hPrev);
     }
     SetTextColor(hdc, RGB(220, 220, 220));
@@ -299,6 +369,15 @@ static void OnControlBarClick(HWND hwnd, int x, int y, bool drag) {
     if (!drag) {
         RECT lr; GetLoopBtnRect(hwnd, lr);
         if (x>=lr.left&&x<lr.right) { MediaToggleLoop(); InvalidateRect(hwnd,0,TRUE); return; }
+        // 自動再生トグル
+        RECT ar; GetAutoPlayBtnRect(hwnd, ar);
+        if (x>=ar.left&&x<ar.right) {
+            AppSettings s; LoadSettings(s);
+            s.autoPlayMedia = !s.autoPlayMedia;
+            SaveSettings(s);
+            InvalidateSettingsCache();
+            InvalidateRect(hwnd,0,TRUE); return;
+        }
         // 音量アイコンクリック: ミュートトグル
         RECT vi; GetVolIconRect(hwnd, vi);
         if (x>=vi.left&&x<vi.right) {
@@ -324,7 +403,47 @@ static LRESULT CALLBACK ControlBarWndProc(HWND h, UINT m, WPARAM w, LPARAM l) {
     switch(m) {
     case WM_PAINT: { PAINTSTRUCT ps; HDC dc=BeginPaint(h,&ps); PaintControlBar(h,dc); EndPaint(h,&ps); return 0; }
     case WM_LBUTTONDOWN: SetCapture(h); g_seekDragging=true; OnControlBarClick(h,(short)LOWORD(l),(short)HIWORD(l),false); return 0;
-    case WM_MOUSEMOVE: if(g_seekDragging) OnControlBarClick(h,(short)LOWORD(l),(short)HIWORD(l),true); return 0;
+    case WM_MOUSEMOVE: {
+        if(g_seekDragging) { OnControlBarClick(h,(short)LOWORD(l),(short)HIWORD(l),true); return 0; }
+        // ツールチップにリレー
+        if (g_tooltip) {
+            MSG msg = { h, m, w, l };
+            SendMessageW(g_tooltip, TTM_RELAYEVENT, 0, (LPARAM)&msg);
+        }
+        // ホバー追跡
+        int mx = (short)LOWORD(l);
+        int newHover = 0;
+        RECT lr; GetLoopBtnRect(h, lr);
+        RECT ar; GetAutoPlayBtnRect(h, ar);
+        RECT vi; GetVolIconRect(h, vi);
+        if (mx>=lr.left&&mx<lr.right) newHover = 1;
+        else if (mx>=ar.left&&mx<ar.right) newHover = 2;
+        else if (mx>=vi.left&&mx<vi.right) newHover = 3;
+        if (newHover != g_hoverBtn) {
+            g_hoverBtn = newHover;
+            InvalidateRect(h,0,TRUE);
+            // ツールチップのテキスト更新
+            if (g_tooltip) {
+                TOOLINFOW ti = {}; ti.cbSize = sizeof(ti);
+                ti.uFlags = TTF_IDISHWND;
+                ti.hwnd = h;
+                ti.uId = (UINT_PTR)h;
+                if (newHover == 1) ti.lpszText = (LPWSTR)L"ループ再生";
+                else if (newHover == 2) ti.lpszText = (LPWSTR)L"自動再生";
+                else ti.lpszText = (LPWSTR)L"";
+                SendMessageW(g_tooltip, TTM_UPDATETIPTEXTW, 0, (LPARAM)&ti);
+                if (!newHover) SendMessageW(g_tooltip, TTM_POP, 0, 0);
+            }
+        }
+        // WM_MOUSELEAVE登録
+        TRACKMOUSEEVENT tme = { sizeof(tme), TME_LEAVE, h, 0 };
+        TrackMouseEvent(&tme);
+        return 0;
+    }
+    case WM_MOUSELEAVE:
+        if (g_hoverBtn) { g_hoverBtn = 0; InvalidateRect(h,0,TRUE); }
+        if (g_tooltip) SendMessageW(g_tooltip, TTM_POP, 0, 0);
+        return 0;
     case WM_LBUTTONUP: g_seekDragging=false; ReleaseCapture(); return 0;
     case WM_TIMER: {
         double pos = MediaGetPosition();
@@ -439,6 +558,7 @@ HWND CreateMediaPlayer(HWND parent, HINSTANCE hInst) {
     g_mediaHwnd = CreateWindowExW(0,L"KarikariMedia",0,WS_CHILD|WS_CLIPCHILDREN,0,0,100,100,parent,0,hInst,0);
     g_renderHwnd = CreateWindowExW(0,L"KarikariMediaRender",0,WS_CHILD|WS_VISIBLE|WS_CLIPCHILDREN,0,0,100,60,g_mediaHwnd,0,hInst,0);
     g_controlBar = CreateWindowExW(0,L"KarikariMediaControl",0,WS_CHILD|WS_VISIBLE,0,60,100,kControlBarH,g_mediaHwnd,0,hInst,0);
+    CreateControlBarTooltip(g_controlBar, hInst);
     g_app.wnd.hwndMediaPlayer = g_mediaHwnd;
     return g_mediaHwnd;
 }
@@ -540,6 +660,10 @@ void MediaPlay(const std::wstring& path) {
     g_isPlaying = true;
     g_currentMediaPath = path;
     if (g_controlBar) g_updateTimer = SetTimer(g_controlBar, 1, 250, nullptr);
+
+    // 自動再生OFF: 読み込み直後に一時停止
+    if (!GetCachedSettings().autoPlayMedia)
+        MediaTogglePlayPause();
 }
 
 void MediaStop() {

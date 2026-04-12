@@ -1,4 +1,5 @@
 #include "navbar.h"
+#include "i18n.h"
 
 // Segoe Fluent Icons のコードポイント
 struct NavButtonDef {
@@ -12,12 +13,12 @@ static const NavButtonDef kNavButtons[] = {
     { IDM_NAV_FORWARD,   L"\uE72A", L"進む" },
     { IDM_NAV_UP,        L"\uE74A", L"上へ" },
     { IDM_NAV_REFRESH,   L"\uE72C", L"更新" },
-    { IDM_NAV_HOVER,     L"\uE7B3", L"ホバープレビュー" },
     { IDM_NAV_BOOKSHELF, L"\uE82D", L"本棚" },
     { IDM_NAV_HISTORY,   L"\uE81C", L"履歴" },
     { 0, nullptr, nullptr }, // セパレータ
     { IDM_NAV_LIST,      L"\uE8FD", L"リスト表示" },
     { IDM_NAV_GRID,      L"\uE80A", L"グリッド表示" },
+    { IDM_NAV_HOVER,     L"\uE7B3", L"ホバープレビュー" },
 };
 
 // 右端に配置するボタン
@@ -114,13 +115,13 @@ static HIMAGELIST CreateIconImageList(int cx, int cy)
     HIMAGELIST hil = ImageList_Create(cx, cy, ILC_COLOR32, 16, 4);
 
     HFONT hFont = CreateFontW(
-        24, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+        27, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
         DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
         ANTIALIASED_QUALITY, DEFAULT_PITCH,
         L"Segoe Fluent Icons");
     if (!hFont)
         hFont = CreateFontW(
-            24, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+            27, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
             DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
             ANTIALIASED_QUALITY, DEFAULT_PITCH,
             L"Segoe MDL2 Assets");
@@ -178,8 +179,38 @@ HWND CreateNavBar(HWND parent, HINSTANCE hInst)
     SendMessageW(hwnd, TB_SETEXTENDEDSTYLE, 0, exStyle | TBSTYLE_EX_DRAWDDARROWS);
 
     // イメージリスト作成・設定（ボタンサイズに合わせて32x32）
-    HIMAGELIST hil = CreateIconImageList(32, 32);
+    HIMAGELIST hil = CreateIconImageList(36, 36);
     SendMessageW(hwnd, TB_SETIMAGELIST, 0, (LPARAM)hil);
+
+    // 無効時用イメージリスト（グレーアウト表示）
+    {
+        HIMAGELIST hilDisabled = ImageList_Create(36, 36, ILC_COLOR32, 16, 4);
+        HFONT hFont = CreateFontW(27, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+            DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+            ANTIALIASED_QUALITY, DEFAULT_PITCH, L"Segoe Fluent Icons");
+        if (!hFont) hFont = CreateFontW(27, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+            DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+            ANTIALIASED_QUALITY, DEFAULT_PITCH, L"Segoe MDL2 Assets");
+        HDC hdcScreen = GetDC(nullptr);
+        HDC hdcMem = CreateCompatibleDC(hdcScreen);
+        for (auto& btn : kNavButtons)
+        {
+            if (!btn.icon) continue;
+            BITMAPINFO bmi = {};
+            bmi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+            bmi.bmiHeader.biWidth = 36; bmi.bmiHeader.biHeight = -36;
+            bmi.bmiHeader.biPlanes = 1; bmi.bmiHeader.biBitCount = 32;
+            void* pBits = nullptr;
+            HBITMAP hbmp = CreateDIBSection(hdcMem, &bmi, DIB_RGB_COLORS, &pBits, nullptr, 0);
+            HBITMAP hOld = (HBITMAP)SelectObject(hdcMem, hbmp);
+            RenderTextToBitmap(hdcMem, hFont, btn.icon, 1, 36, 36, pBits, 180, 180, 180);
+            SelectObject(hdcMem, hOld);
+            ImageList_Add(hilDisabled, hbmp, nullptr);
+            DeleteObject(hbmp);
+        }
+        DeleteDC(hdcMem); ReleaseDC(nullptr, hdcScreen); DeleteObject(hFont);
+        SendMessageW(hwnd, TB_SETDISABLEDIMAGELIST, 0, (LPARAM)hilDisabled);
+    }
 
     // ボタン追加
     int imgIndex = 0;
@@ -219,11 +250,11 @@ static HIMAGELIST CreateRightIconImageList(int cx, int cy)
     if (cached) ImageList_Destroy(cached);
 
     HIMAGELIST hil = ImageList_Create(cx, cy, ILC_COLOR32, 4, 2);
-    HFONT hFont = CreateFontW(24, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+    HFONT hFont = CreateFontW(27, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
         DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
         ANTIALIASED_QUALITY, DEFAULT_PITCH, L"Segoe Fluent Icons");
     if (!hFont)
-        hFont = CreateFontW(24, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+        hFont = CreateFontW(27, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
             DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
             ANTIALIASED_QUALITY, DEFAULT_PITCH, L"Segoe MDL2 Assets");
 
@@ -266,7 +297,7 @@ HWND CreateNavBarRight(HWND parent, HINSTANCE hInst)
 
     SendMessageW(hwnd, TB_BUTTONSTRUCTSIZE, sizeof(TBBUTTON), 0);
 
-    HIMAGELIST hil = CreateRightIconImageList(32, 32);
+    HIMAGELIST hil = CreateRightIconImageList(36, 36);
     SendMessageW(hwnd, TB_SETIMAGELIST, 0, (LPARAM)hil);
 
     int imgIndex = 0;
@@ -285,4 +316,23 @@ HWND CreateNavBarRight(HWND parent, HINSTANCE hInst)
 
     g_app.wnd.hwndNavBarRight = hwnd;
     return hwnd;
+}
+
+void NavUpdateButtons()
+{
+    if (!g_app.wnd.hwndNavBar) return;
+    SendMessageW(g_app.wnd.hwndNavBar, TB_ENABLEBUTTON, IDM_NAV_BACK,
+        MAKELONG(!g_app.nav.historyBack.empty(), 0));
+    SendMessageW(g_app.wnd.hwndNavBar, TB_ENABLEBUTTON, IDM_NAV_FORWARD,
+        MAKELONG(!g_app.nav.historyForward.empty(), 0));
+}
+
+void UpdateNavbarTooltips()
+{
+    // 左ツールバーのツールチップ文字列テーブルを更新
+    // kNavButtons の tooltip はイニシャルのみ使用。
+    // 実際のツールチップは TBN_GETINFOTIP で window.cpp が返すため、
+    // ここでは kNavButtons / kNavButtonsRight の tooltip を直接書き換える。
+    // ただし const 配列なので、代わりに何もしない（window.cpp 側で I18nGet を使う）。
+    // この関数は将来的な拡張ポイントとして残す。
 }

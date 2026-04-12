@@ -14,6 +14,7 @@
 #include "media.h"
 #include "window.h"
 #include "help.h"
+#include "i18n.h"
 #include <shellapi.h>
 #include <shlwapi.h>
 
@@ -34,7 +35,7 @@ static void ShowNormalUI()
     ShowWindow(g_app.wnd.hwndFilterBox, SW_SHOW);
     ShowWindow(g_app.wnd.hwndList, SW_SHOW);
     if (g_app.wnd.hwndFolderLabel)
-        SetWindowTextW(g_app.wnd.hwndFolderLabel, L"フォルダ");
+        SetWindowTextW(g_app.wnd.hwndFolderLabel, I18nGet(L"ui.folder").c_str());
 }
 
 static void HideHistoryUI()
@@ -72,7 +73,11 @@ void HandleCommand(HWND hwnd, UINT cmd)
     case IDM_NAV_FORWARD: NavigateForward(); break;
     case IDM_NAV_UP:      NavigateUp(); break;
     case IDM_NAV_REFRESH:
-        if (!g_app.nav.currentFolder.empty())
+        if (g_app.nav.inArchiveMode && !g_app.nav.currentArchive.empty())
+        {
+            LoadArchiveToList(g_app.nav.currentArchive);
+        }
+        else if (!g_app.nav.currentFolder.empty())
         {
             LoadFolder(g_app.nav.currentFolder);
             PopulateListView();
@@ -115,7 +120,7 @@ void HandleCommand(HWND hwnd, UINT cmd)
             SetWindowTextW(g_app.wnd.hwndHistoryFilter, g_historyFilterText.c_str());
         BuildHistoryList();
         LayoutChildren(hwnd);
-        UpdateAddressBar(L"履歴");
+        UpdateAddressBar(I18nGet(L"ui.history").c_str());
         break;
     }
 
@@ -140,7 +145,8 @@ void HandleCommand(HWND hwnd, UINT cmd)
         HideNormalUI(); // フォルダラベル/ソートボタンを非表示
         if (g_app.wnd.hwndBookshelfToolbar) ShowWindow(g_app.wnd.hwndBookshelfToolbar, SW_SHOW);
         ShowBookshelfTree();
-        UpdateAddressBar(L"本棚");
+        RevealCurrentPath();
+        UpdateAddressBar(I18nGet(L"ui.bookshelf").c_str());
         LayoutChildren(hwnd);
         break;
     }
@@ -319,7 +325,11 @@ void HandleKeyDown(HWND hwnd, WPARAM vk)
     case VK_HOME:  GoToFile(0); break;
     case VK_END:   GoToFile((int)g_app.nav.viewableFiles.size() - 1); break;
     case VK_F5:
-        if (!g_app.nav.currentFolder.empty())
+        if (g_app.nav.inArchiveMode && !g_app.nav.currentArchive.empty())
+        {
+            LoadArchiveToList(g_app.nav.currentArchive);
+        }
+        else if (!g_app.nav.currentFolder.empty())
         {
             LoadFolder(g_app.nav.currentFolder);
             PopulateListView();
@@ -422,20 +432,32 @@ void HandleKeyDown(HWND hwnd, WPARAM vk)
             auto& item = g_app.nav.fileItems[sel];
             if (!g_app.nav.inArchiveMode)
             {
-                std::wstring msg = L"\"" + item.name + L"\" を削除しますか？";
-                if (MessageBoxW(hwnd, msg.c_str(), L"確認", MB_YESNO | MB_ICONQUESTION) == IDYES)
+                std::wstring msg = L"\"" + item.name + L"\" " + I18nGet(L"dlg.delete");
+                std::wstring delPath = item.fullPath;
+                if (MessageBoxW(hwnd, msg.c_str(), I18nGet(L"dlg.confirm").c_str(), MB_YESNO | MB_ICONQUESTION) == IDYES)
                 {
+                    // 削除対象のファイルロックを解放
+                    if (_wcsicmp(delPath.c_str(), g_app.nav.currentPath.c_str()) == 0)
+                    {
+                        ViewerStopAnimation();
+                        g_app.viewer.bitmap.Reset();
+                        g_app.viewer.bitmap2.Reset();
+                        MediaStop();
+                    }
+                    if (IsArchiveFile(delPath))
+                        CloseCurrentArchive();
+
                     // ごみ箱へ移動
-                    std::wstring path = item.fullPath;
-                    path.push_back(L'\0'); // SHFileOperation用のダブルNULL
+                    std::wstring shPath = delPath;
+                    shPath.push_back(L'\0'); // SHFileOperation用のダブルNULL
                     SHFILEOPSTRUCTW op = {};
                     op.wFunc = FO_DELETE;
-                    op.pFrom = path.c_str();
+                    op.pFrom = shPath.c_str();
                     op.fFlags = FOF_ALLOWUNDO | FOF_NOCONFIRMATION;
                     if (SHFileOperationW(&op) == 0)
                     {
-                        LoadFolder(g_app.nav.currentFolder);
-                        PopulateListView();
+                        RemoveFileItemByPath(delPath);
+                        RemoveTreeItemByPath(delPath);
                     }
                 }
             }

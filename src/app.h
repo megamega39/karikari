@@ -128,6 +128,26 @@ struct WindowHandles {
     HWND hwndZoomLabel = nullptr;     // ズーム率 "100%"
 };
 
+// 1ページ分のアニメーション状態
+struct AnimState {
+    enum Type { None, Gif, WebP } type = None;
+    // GIF
+    ComPtr<IWICBitmapDecoder> gifDecoder;
+    ComPtr<IWICBitmap> gifCanvas;
+    ComPtr<IWICBitmap> gifPrevCanvas;
+    UINT gifCanvasW = 0, gifCanvasH = 0;
+    UINT gifFrameCount = 0, gifCurrentFrame = 0;
+    // WebP
+    void* webpDecoder = nullptr;
+    std::vector<BYTE> webpFileData;
+    UINT webpCanvasW = 0, webpCanvasH = 0;
+    int webpPrevTimestamp = 0;
+    // タイミング
+    int nextDelay = 100;
+    int elapsed = 0;
+    bool IsActive() const { return type != None; }
+};
+
 struct ViewerState {
     ComPtr<ID2D1Factory1> d2dFactory;         // D2D 1.1 Factory
     ComPtr<ID2D1DeviceContext> deviceContext;  // DeviceContext (旧: renderTarget)
@@ -138,27 +158,16 @@ struct ViewerState {
     ComPtr<ID2D1Bitmap> bitmap;
     ComPtr<ID2D1Bitmap> bitmap2;
 
-    // アニメーション（GIF/WebP）
-    std::vector<ComPtr<ID2D1Bitmap>> animFrames;
-    std::vector<int> animDelays; // ms
-    int animCurrentFrame = 0;
+    // アニメーション
+    AnimState anim1, anim2;  // ページ1/2のアニメ状態
     UINT_PTR animTimer = 0;
     bool isAnimating = false;
+    DWORD lastAnimTick = 0;
 
-    // WebPアニメーション ストリーミング用（libwebp）
-    enum AnimType { AnimNone, AnimGif, AnimWebP } animType = AnimNone;
-    void* webpDecoder = nullptr;       // WebPAnimDecoder*
-    std::vector<BYTE> webpFileData;    // WebPファイル全体のバッファ
-    UINT webpCanvasW = 0, webpCanvasH = 0;
-    int webpPrevTimestamp = 0;
-
-    // GIFストリーミング用
-    ComPtr<IWICBitmapDecoder> gifDecoder;
-    ComPtr<IWICBitmap> gifCanvas;      // 合成キャンバス
-    ComPtr<IWICBitmap> gifPrevCanvas;  // disposal=3 用バックアップ
-    UINT gifCanvasW = 0, gifCanvasH = 0;
-    UINT gifFrameCount = 0;
-    UINT gifCurrentFrame = 0;
+    // レガシーアニメーション（互換用）
+    std::vector<ComPtr<ID2D1Bitmap>> animFrames;
+    std::vector<int> animDelays;
+    int animCurrentFrame = 0;
 
     // ワーカースレッドからのビューサイズ参照用（GetClientRect代替）
     std::atomic<UINT> cachedViewW{0};

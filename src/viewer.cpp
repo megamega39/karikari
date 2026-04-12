@@ -14,16 +14,35 @@
 #include <webp/decode.h>
 #include <webp/demux.h>
 
-// 型安全なWebPAnimDecoderアクセサ（app.hではvoid*で保持）
-static WebPAnimDecoder* GetWebPDecoder() { return static_cast<WebPAnimDecoder*>(g_app.viewer.webpDecoder); }
-static void SetWebPDecoder(WebPAnimDecoder* dec) { g_app.viewer.webpDecoder = dec; }
-static void DeleteWebPDecoder() {
-    if (g_app.viewer.webpDecoder) { WebPAnimDecoderDelete(GetWebPDecoder()); g_app.viewer.webpDecoder = nullptr; }
+// 型安全なWebPAnimDecoderアクセサ（AnimState用）
+static WebPAnimDecoder* GetWebPDecoder(AnimState& a) { return static_cast<WebPAnimDecoder*>(a.webpDecoder); }
+static void DeleteWebPDecoder(AnimState& a) {
+    if (a.webpDecoder) { WebPAnimDecoderDelete(static_cast<WebPAnimDecoder*>(a.webpDecoder)); a.webpDecoder = nullptr; }
+}
+
+// AnimState::Reset の実装
+void AnimStateReset(AnimState& a) {
+    if (a.webpDecoder) DeleteWebPDecoder(a);
+    a.webpFileData.clear();
+    a.webpFileData.shrink_to_fit();
+    a.webpCanvasW = a.webpCanvasH = 0;
+    a.webpPrevTimestamp = 0;
+    a.gifDecoder.Reset();
+    a.gifCanvas.Reset();
+    a.gifPrevCanvas.Reset();
+    a.gifCanvasW = a.gifCanvasH = 0;
+    a.gifFrameCount = a.gifCurrentFrame = 0;
+    a.type = AnimState::None;
+    a.nextDelay = 100;
+    a.elapsed = 0;
 }
 
 static bool LoadBitmapCached(const std::wstring& path, ComPtr<ID2D1Bitmap>& out);
+static bool GetImageSize(const std::wstring& path, UINT& w, UINT& h, bool cacheOnly, UINT* outFrameCount);
+static std::atomic<int> g_asyncDecodeGeneration{0};
 static constexpr UINT_PTR kAnimTimerId = 42;
-static bool GifDecodeNextFrame(ComPtr<ID2D1Bitmap>& outBmp, int& outDelay);
+static bool GifDecodeNextFrame(AnimState& anim, ComPtr<ID2D1Bitmap>& outBmp, int& outDelay);
+static bool WebPDecodeNextFrame(AnimState& anim, ComPtr<ID2D1Bitmap>& outBmp, int& outDelay);
 
 static HRESULT CreateViewerRenderTarget(HWND hwnd)
 {
@@ -113,7 +132,9 @@ static void PaintSingle(ID2D1DeviceContext* rt)
     if (!g_app.viewer.bitmap) return;
 
     auto rtSize = rt->GetSize();
-    auto bmpSize = g_app.viewer.bitmap->GetSize();
+    // DPI非依存のピクセルサイズを使用
+    auto px = g_app.viewer.bitmap->GetPixelSize();
+    D2D1_SIZE_F bmpSize = { (float)px.width, (float)px.height };
 
     // 回転90/270度時は幅高さを入れ替えてスケール計算
     bool rotated = (g_app.viewer.rotation == 90 || g_app.viewer.rotation == 270);
@@ -159,14 +180,15 @@ static void PaintSpread(ID2D1DeviceContext* rt)
     if (!g_app.viewer.bitmap || !g_app.viewer.bitmap2) return;
 
     auto rtSize = rt->GetSize();
-    auto s1 = g_app.viewer.bitmap->GetSize();
-    auto s2 = g_app.viewer.bitmap2->GetSize();
 
     // 左右どちらのページか（RTL対応）
     ID2D1Bitmap* leftBmp = g_app.viewer.isRTL ? g_app.viewer.bitmap2.Get() : g_app.viewer.bitmap.Get();
     ID2D1Bitmap* rightBmp = g_app.viewer.isRTL ? g_app.viewer.bitmap.Get() : g_app.viewer.bitmap2.Get();
-    auto leftSize = leftBmp->GetSize();
-    auto rightSize = rightBmp->GetSize();
+    // DPI非依存のピクセルサイズを使用（アニメGIF/WebPと静止画でDPIが異なるため）
+    auto lp = leftBmp->GetPixelSize();
+    auto rp = rightBmp->GetPixelSize();
+    D2D1_SIZE_F leftSize = { (float)lp.width, (float)lp.height };
+    D2D1_SIZE_F rightSize = { (float)rp.width, (float)rp.height };
 
     // 高さ基準でス���ール合わせ
     float scaleL = rtSize.height / leftSize.height;
@@ -270,7 +292,8 @@ static bool IsImageOverflowing()
     if (!g_app.viewer.bitmap || !g_app.viewer.deviceContext) return false;
 
     auto rtSize = g_app.viewer.deviceContext->GetSize();
-    auto bmpSize = g_app.viewer.bitmap->GetSize();
+    auto px = g_app.viewer.bitmap->GetPixelSize();
+    D2D1_SIZE_F bmpSize = { (float)px.width, (float)px.height };
     float baseScale = CalcBaseScale(rtSize, bmpSize);
     float scale = baseScale * g_app.viewer.zoom;
 
@@ -371,73 +394,75 @@ static LRESULT CALLBACK ViewerWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM
             return 0;
 
         KillTimer(hwnd, kAnimTimerId);
-        int delay = 100;
 
-        if (g_app.viewer.animType == ViewerState::AnimWebP)
+        DWORD now = GetTickCount();
+        DWORD dt = now - g_app.viewer.lastAnimTick;
+        if (dt > 5000) dt = 16; // 異常値ガード
+        g_app.viewer.lastAnimTick = now;
+        bool needRepaint = false;
+
+        // anim1 (bitmap)
+        auto& a1 = g_app.viewer.anim1;
+        if (a1.IsActive())
         {
-            auto* dec = GetWebPDecoder();
-            if (!dec) return 0;
-
-            if (!WebPAnimDecoderHasMoreFrames(dec))
+            a1.elapsed += (int)dt;
+            if (a1.elapsed >= a1.nextDelay)
             {
-                // ループ: デコーダを再作成して先頭に戻す
-                WebPAnimDecoderDelete(dec);
-                WebPData webpData;
-                webpData.bytes = g_app.viewer.webpFileData.data();
-                webpData.size = g_app.viewer.webpFileData.size();
-                WebPAnimDecoderOptions decOpts;
-                WebPAnimDecoderOptionsInit(&decOpts);
-                decOpts.color_mode = MODE_BGRA;
-                dec = WebPAnimDecoderNew(&webpData, &decOpts);
-                g_app.viewer.webpDecoder = dec;
-                g_app.viewer.webpPrevTimestamp = 0;
-                if (!dec) { g_app.viewer.isAnimating = false; return 0; }
-            }
-
-            uint8_t* buf = nullptr;
-            int timestamp = 0;
-            if (WebPAnimDecoderGetNext(dec, &buf, &timestamp))
-            {
-                delay = timestamp - g_app.viewer.webpPrevTimestamp;
-                if (delay < 20) delay = 20;
-                g_app.viewer.webpPrevTimestamp = timestamp;
-
-                UINT stride = g_app.viewer.webpCanvasW * 4;
-                bool reused = false;
-                if (g_app.viewer.bitmap)
-                {
-                    auto sz = g_app.viewer.bitmap->GetPixelSize();
-                    if (sz.width == g_app.viewer.webpCanvasW && sz.height == g_app.viewer.webpCanvasH)
-                        reused = SUCCEEDED(g_app.viewer.bitmap->CopyFromMemory(nullptr, buf, stride));
-                }
-                if (!reused)
-                {
-                    D2D1_BITMAP_PROPERTIES props = D2D1::BitmapProperties(
-                        D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED));
-                    ComPtr<ID2D1Bitmap> bmp;
-                    if (SUCCEEDED(g_app.viewer.deviceContext->CreateBitmap(
-                        D2D1::SizeU(g_app.viewer.webpCanvasW, g_app.viewer.webpCanvasH),
-                        buf, stride, props, bmp.GetAddressOf())))
-                        g_app.viewer.bitmap = bmp;
-                }
+                a1.elapsed = 0;
+                int delay = 100;
+                bool ok = false;
+                if (a1.type == AnimState::Gif)
+                    ok = GifDecodeNextFrame(a1, g_app.viewer.bitmap, delay);
+                else if (a1.type == AnimState::WebP)
+                    ok = WebPDecodeNextFrame(a1, g_app.viewer.bitmap, delay);
+                if (ok) a1.nextDelay = delay;
+                needRepaint = true;
             }
         }
-        else if (g_app.viewer.animType == ViewerState::AnimGif)
+
+        // anim2 (bitmap2)
+        auto& a2 = g_app.viewer.anim2;
+        if (a2.IsActive())
         {
-            ComPtr<ID2D1Bitmap> bmp;
-            if (GifDecodeNextFrame(bmp, delay))
-                g_app.viewer.bitmap = bmp;
+            a2.elapsed += (int)dt;
+            if (a2.elapsed >= a2.nextDelay)
+            {
+                a2.elapsed = 0;
+                int delay = 100;
+                bool ok = false;
+                if (a2.type == AnimState::Gif)
+                    ok = GifDecodeNextFrame(a2, g_app.viewer.bitmap2, delay);
+                else if (a2.type == AnimState::WebP)
+                    ok = WebPDecodeNextFrame(a2, g_app.viewer.bitmap2, delay);
+                if (ok) a2.nextDelay = delay;
+                needRepaint = true;
+            }
         }
-        else if (!g_app.viewer.animFrames.empty())
+
+        // レガシーアニメ（animFrames）
+        if (!a1.IsActive() && !a2.IsActive() && !g_app.viewer.animFrames.empty())
         {
-            // レガシー: プリデコード済みフレーム
             g_app.viewer.animCurrentFrame = (g_app.viewer.animCurrentFrame + 1) % (int)g_app.viewer.animFrames.size();
             g_app.viewer.bitmap = g_app.viewer.animFrames[g_app.viewer.animCurrentFrame];
-            delay = g_app.viewer.animDelays[g_app.viewer.animCurrentFrame];
+            needRepaint = true;
         }
 
-        InvalidateRect(hwnd, nullptr, FALSE);
-        g_app.viewer.animTimer = SetTimer(hwnd, kAnimTimerId, delay, nullptr);
+        if (needRepaint)
+            InvalidateRect(hwnd, nullptr, FALSE);
+
+        // 次回タイマー間隔
+        int r1 = a1.IsActive() ? (std::max)(1, a1.nextDelay - a1.elapsed) : INT_MAX;
+        int r2 = a2.IsActive() ? (std::max)(1, a2.nextDelay - a2.elapsed) : INT_MAX;
+        int next = (std::min)(r1, r2);
+        if (next == INT_MAX)
+        {
+            // レガシーフォールバック
+            if (!g_app.viewer.animFrames.empty())
+                next = g_app.viewer.animDelays[g_app.viewer.animCurrentFrame];
+            else
+                next = 100;
+        }
+        g_app.viewer.animTimer = SetTimer(hwnd, kAnimTimerId, next, nullptr);
         return 0;
     }
 
@@ -567,25 +592,25 @@ static UINT GetMetadataUI1(IWICMetadataQueryReader* meta, const wchar_t* name, U
 }
 
 // === GIFストリーミング: 1フレーム合成してD2Dビットマップを返す ===
-static bool GifDecodeNextFrame(ComPtr<ID2D1Bitmap>& outBmp, int& outDelay)
+static bool GifDecodeNextFrame(AnimState& anim, ComPtr<ID2D1Bitmap>& outBmp, int& outDelay)
 {
     auto& v = g_app.viewer;
-    if (!v.gifDecoder || !v.gifCanvas || !v.wicFactory || !v.deviceContext) return false;
+    if (!anim.gifDecoder || !anim.gifCanvas || !v.wicFactory || !v.deviceContext) return false;
 
-    if (v.gifCurrentFrame >= v.gifFrameCount)
+    if (anim.gifCurrentFrame >= anim.gifFrameCount)
     {
         // ループ: キャンバスクリアして先頭へ
-        v.gifCurrentFrame = 0;
+        anim.gifCurrentFrame = 0;
         ComPtr<IWICBitmapLock> lock;
-        WICRect lockRc = { 0, 0, (int)v.gifCanvasW, (int)v.gifCanvasH };
-        if (FAILED(v.gifCanvas->Lock(&lockRc, WICBitmapLockWrite, lock.GetAddressOf()))) return false;
+        WICRect lockRc = { 0, 0, (int)anim.gifCanvasW, (int)anim.gifCanvasH };
+        if (FAILED(anim.gifCanvas->Lock(&lockRc, WICBitmapLockWrite, lock.GetAddressOf()))) return false;
         UINT bufSize = 0; BYTE* pBuf = nullptr;
         lock->GetDataPointer(&bufSize, &pBuf);
         if (pBuf) memset(pBuf, 0, bufSize);
     }
 
     ComPtr<IWICBitmapFrameDecode> frame;
-    if (FAILED(v.gifDecoder->GetFrame(v.gifCurrentFrame, frame.GetAddressOf()))) return false;
+    if (FAILED(anim.gifDecoder->GetFrame(anim.gifCurrentFrame, frame.GetAddressOf()))) return false;
 
     int delay = 100;
     UINT frameLeft = 0, frameTop = 0, disposal = 0;
@@ -601,12 +626,12 @@ static bool GifDecodeNextFrame(ComPtr<ID2D1Bitmap>& outBmp, int& outDelay)
     outDelay = delay;
 
     // disposal=3: 合成前のキャンバスを保存
-    if (disposal == 3 && v.gifPrevCanvas)
+    if (disposal == 3 && anim.gifPrevCanvas)
     {
         ComPtr<IWICBitmapLock> srcLock, dstLock;
-        WICRect lockRc = { 0, 0, (int)v.gifCanvasW, (int)v.gifCanvasH };
-        if (SUCCEEDED(v.gifCanvas->Lock(&lockRc, WICBitmapLockRead, srcLock.GetAddressOf())) &&
-            SUCCEEDED(v.gifPrevCanvas->Lock(&lockRc, WICBitmapLockWrite, dstLock.GetAddressOf())))
+        WICRect lockRc = { 0, 0, (int)anim.gifCanvasW, (int)anim.gifCanvasH };
+        if (SUCCEEDED(anim.gifCanvas->Lock(&lockRc, WICBitmapLockRead, srcLock.GetAddressOf())) &&
+            SUCCEEDED(anim.gifPrevCanvas->Lock(&lockRc, WICBitmapLockWrite, dstLock.GetAddressOf())))
         {
             UINT srcSize = 0, dstSize = 0; BYTE* pSrc = nullptr; BYTE* pDst = nullptr;
             srcLock->GetDataPointer(&srcSize, &pSrc);
@@ -630,18 +655,18 @@ static bool GifDecodeNextFrame(ComPtr<ID2D1Bitmap>& outBmp, int& outDelay)
     // キャンバスにフレームを合成
     {
         ComPtr<IWICBitmapLock> lock;
-        WICRect lockRc = { 0, 0, (int)v.gifCanvasW, (int)v.gifCanvasH };
-        if (FAILED(v.gifCanvas->Lock(&lockRc, WICBitmapLockWrite, lock.GetAddressOf()))) return false;
+        WICRect lockRc = { 0, 0, (int)anim.gifCanvasW, (int)anim.gifCanvasH };
+        if (FAILED(anim.gifCanvas->Lock(&lockRc, WICBitmapLockWrite, lock.GetAddressOf()))) return false;
         UINT canvasStride = 0; lock->GetStride(&canvasStride);
         UINT bufSize = 0; BYTE* pCanvas = nullptr;
         lock->GetDataPointer(&bufSize, &pCanvas);
         if (!pCanvas) return false;
 
-        for (UINT y = 0; y < frameH && (frameTop + y) < v.gifCanvasH; y++)
+        for (UINT y = 0; y < frameH && (frameTop + y) < anim.gifCanvasH; y++)
         {
             BYTE* dst = pCanvas + (frameTop + y) * canvasStride + frameLeft * 4;
             BYTE* src = framePixels.data() + y * frameStride;
-            UINT copyW = (std::min)(frameW, v.gifCanvasW - frameLeft);
+            UINT copyW = (std::min)(frameW, anim.gifCanvasW - frameLeft);
             for (UINT x = 0; x < copyW; x++)
             {
                 BYTE a = src[x * 4 + 3];
@@ -653,51 +678,48 @@ static bool GifDecodeNextFrame(ComPtr<ID2D1Bitmap>& outBmp, int& outDelay)
     // キャンバスからD2Dビットマップ（CopyFromMemoryで再利用）
     {
         ComPtr<IWICBitmapLock> lock;
-        WICRect lockRc = { 0, 0, (int)v.gifCanvasW, (int)v.gifCanvasH };
-        if (FAILED(v.gifCanvas->Lock(&lockRc, WICBitmapLockRead, lock.GetAddressOf()))) return false;
+        WICRect lockRc = { 0, 0, (int)anim.gifCanvasW, (int)anim.gifCanvasH };
+        if (FAILED(anim.gifCanvas->Lock(&lockRc, WICBitmapLockRead, lock.GetAddressOf()))) return false;
         UINT stride = 0; UINT bufSz = 0; BYTE* pBuf = nullptr;
         lock->GetStride(&stride);
         lock->GetDataPointer(&bufSz, &pBuf);
 
         bool reused = false;
-        if (v.bitmap)
+        if (outBmp)
         {
-            auto sz = v.bitmap->GetPixelSize();
-            if (sz.width == v.gifCanvasW && sz.height == v.gifCanvasH)
-                reused = SUCCEEDED(v.bitmap->CopyFromMemory(nullptr, pBuf, stride));
+            auto sz = outBmp->GetPixelSize();
+            if (sz.width == anim.gifCanvasW && sz.height == anim.gifCanvasH)
+                reused = SUCCEEDED(outBmp->CopyFromMemory(nullptr, pBuf, stride));
         }
-        if (reused)
-            outBmp = v.bitmap;
-        else
+        if (!reused)
         {
+            outBmp.Reset();
             D2D1_BITMAP_PROPERTIES props = D2D1::BitmapProperties(
                 D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED));
             if (FAILED(v.deviceContext->CreateBitmap(
-                D2D1::SizeU(v.gifCanvasW, v.gifCanvasH), pBuf, stride, props, outBmp.GetAddressOf()))) return false;
+                D2D1::SizeU(anim.gifCanvasW, anim.gifCanvasH), pBuf, stride, props, outBmp.GetAddressOf()))) return false;
         }
     }
 
     // disposal 処理
     if (disposal == 2)
     {
-        // 背景色で塗りつぶし
         ComPtr<IWICBitmapLock> lock;
         WICRect lockRc = { (int)frameLeft, (int)frameTop, (int)frameW, (int)frameH };
-        if (frameLeft + frameW <= v.gifCanvasW && frameTop + frameH <= v.gifCanvasH)
-            if (SUCCEEDED(v.gifCanvas->Lock(&lockRc, WICBitmapLockWrite, lock.GetAddressOf())))
+        if (frameLeft + frameW <= anim.gifCanvasW && frameTop + frameH <= anim.gifCanvasH)
+            if (SUCCEEDED(anim.gifCanvas->Lock(&lockRc, WICBitmapLockWrite, lock.GetAddressOf())))
             {
                 UINT stride = 0; UINT bufSz = 0; BYTE* pBuf = nullptr;
                 lock->GetStride(&stride); lock->GetDataPointer(&bufSz, &pBuf);
                 if (pBuf) for (UINT y = 0; y < frameH; y++) memset(pBuf + y * stride, 0, frameW * 4);
             }
     }
-    else if (disposal == 3 && v.gifPrevCanvas)
+    else if (disposal == 3 && anim.gifPrevCanvas)
     {
-        // 前のキャンバスに復元
         ComPtr<IWICBitmapLock> srcLock, dstLock;
-        WICRect lockRc = { 0, 0, (int)v.gifCanvasW, (int)v.gifCanvasH };
-        if (SUCCEEDED(v.gifPrevCanvas->Lock(&lockRc, WICBitmapLockRead, srcLock.GetAddressOf())) &&
-            SUCCEEDED(v.gifCanvas->Lock(&lockRc, WICBitmapLockWrite, dstLock.GetAddressOf())))
+        WICRect lockRc = { 0, 0, (int)anim.gifCanvasW, (int)anim.gifCanvasH };
+        if (SUCCEEDED(anim.gifPrevCanvas->Lock(&lockRc, WICBitmapLockRead, srcLock.GetAddressOf())) &&
+            SUCCEEDED(anim.gifCanvas->Lock(&lockRc, WICBitmapLockWrite, dstLock.GetAddressOf())))
         {
             UINT srcSize = 0, dstSize = 0; BYTE* pSrc = nullptr; BYTE* pDst = nullptr;
             srcLock->GetDataPointer(&srcSize, &pSrc);
@@ -706,7 +728,61 @@ static bool GifDecodeNextFrame(ComPtr<ID2D1Bitmap>& outBmp, int& outDelay)
         }
     }
 
-    v.gifCurrentFrame++;
+    anim.gifCurrentFrame++;
+    return true;
+}
+
+// === WebPストリーミング: 1フレームデコードしてD2Dビットマップを返す ===
+static bool WebPDecodeNextFrame(AnimState& anim, ComPtr<ID2D1Bitmap>& outBmp, int& outDelay)
+{
+    auto* dec = GetWebPDecoder(anim);
+    if (!dec) return false;
+
+    if (!WebPAnimDecoderHasMoreFrames(dec))
+    {
+        // ループ: デコーダを再作成して先頭に戻す
+        WebPAnimDecoderDelete(dec);
+        WebPData webpData;
+        webpData.bytes = anim.webpFileData.data();
+        webpData.size = anim.webpFileData.size();
+        WebPAnimDecoderOptions decOpts;
+        WebPAnimDecoderOptionsInit(&decOpts);
+        decOpts.color_mode = MODE_BGRA;
+        dec = WebPAnimDecoderNew(&webpData, &decOpts);
+        anim.webpDecoder = dec;
+        anim.webpPrevTimestamp = 0;
+        if (!dec) return false;
+    }
+
+    uint8_t* buf = nullptr;
+    int timestamp = 0;
+    if (!WebPAnimDecoderGetNext(dec, &buf, &timestamp)) return false;
+
+    int delay = timestamp - anim.webpPrevTimestamp;
+    if (delay < 20) delay = 20;
+    outDelay = delay;
+    anim.webpPrevTimestamp = timestamp;
+
+    UINT stride = anim.webpCanvasW * 4;
+    bool reused = false;
+    if (outBmp)
+    {
+        auto sz = outBmp->GetPixelSize();
+        if (sz.width == anim.webpCanvasW && sz.height == anim.webpCanvasH)
+            reused = SUCCEEDED(outBmp->CopyFromMemory(nullptr, buf, stride));
+    }
+    if (!reused)
+    {
+        D2D1_BITMAP_PROPERTIES props = D2D1::BitmapProperties(
+            D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED));
+        ComPtr<ID2D1Bitmap> bmp;
+        if (SUCCEEDED(g_app.viewer.deviceContext->CreateBitmap(
+            D2D1::SizeU(anim.webpCanvasW, anim.webpCanvasH),
+            buf, stride, props, bmp.GetAddressOf())))
+            outBmp = bmp;
+        else
+            return false;
+    }
     return true;
 }
 
@@ -726,7 +802,7 @@ static bool ReadFileToBytes(const std::wstring& path, std::vector<BYTE>& out)
 }
 
 // === WebPアニメーション読み込み（libwebp） ===
-static bool TryLoadWebPAnimation(const std::wstring& path)
+static bool TryLoadWebPAnimation(const std::wstring& path, AnimState& anim, ComPtr<ID2D1Bitmap>& outBmp)
 {
     auto& v = g_app.viewer;
 
@@ -736,41 +812,41 @@ static bool TryLoadWebPAnimation(const std::wstring& path)
     {
         auto cached = StreamCacheGet(path);
         if (cached)
-            v.webpFileData.assign(cached->begin(), cached->end());
+            anim.webpFileData.assign(cached->begin(), cached->end());
         else
         {
             std::vector<BYTE> buf;
             if (!ExtractToMemory(arcPath, entryPath, buf)) return false;
-            v.webpFileData = std::move(buf);
+            anim.webpFileData = std::move(buf);
         }
     }
     else
     {
-        if (!ReadFileToBytes(path, v.webpFileData)) return false;
+        if (!ReadFileToBytes(path, anim.webpFileData)) return false;
     }
 
     WebPData webpData;
-    webpData.bytes = v.webpFileData.data();
-    webpData.size = v.webpFileData.size();
+    webpData.bytes = anim.webpFileData.data();
+    webpData.size = anim.webpFileData.size();
 
     // アニメーションかチェック
     WebPDemuxer* demux = WebPDemux(&webpData);
     if (!demux) return false;
     UINT frameCount = WebPDemuxGetI(demux, WEBP_FF_FRAME_COUNT);
-    v.webpCanvasW = WebPDemuxGetI(demux, WEBP_FF_CANVAS_WIDTH);
-    v.webpCanvasH = WebPDemuxGetI(demux, WEBP_FF_CANVAS_HEIGHT);
+    anim.webpCanvasW = WebPDemuxGetI(demux, WEBP_FF_CANVAS_WIDTH);
+    anim.webpCanvasH = WebPDemuxGetI(demux, WEBP_FF_CANVAS_HEIGHT);
     WebPDemuxDelete(demux);
 
-    if (frameCount <= 1) { v.webpFileData.clear(); return false; }
+    if (frameCount <= 1) { anim.webpFileData.clear(); return false; }
 
     // WebPAnimDecoder作成
     WebPAnimDecoderOptions decOpts;
     WebPAnimDecoderOptionsInit(&decOpts);
     decOpts.color_mode = MODE_BGRA;
     auto* dec = WebPAnimDecoderNew(&webpData, &decOpts);
-    if (!dec) { v.webpFileData.clear(); return false; }
-    v.webpDecoder = dec;
-    v.webpPrevTimestamp = 0;
+    if (!dec) { anim.webpFileData.clear(); return false; }
+    anim.webpDecoder = dec;
+    anim.webpPrevTimestamp = 0;
 
     // 最初のフレームをデコード
     uint8_t* buf = nullptr;
@@ -778,31 +854,33 @@ static bool TryLoadWebPAnimation(const std::wstring& path)
     if (!WebPAnimDecoderGetNext(dec, &buf, &timestamp))
     {
         WebPAnimDecoderDelete(dec);
-        v.webpDecoder = nullptr;
-        v.webpFileData.clear();
+        anim.webpDecoder = nullptr;
+        anim.webpFileData.clear();
         return false;
     }
 
-    UINT stride = v.webpCanvasW * 4;
+    UINT stride = anim.webpCanvasW * 4;
     D2D1_BITMAP_PROPERTIES props = D2D1::BitmapProperties(
         D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED));
     ComPtr<ID2D1Bitmap> bmp;
     if (FAILED(v.deviceContext->CreateBitmap(
-        D2D1::SizeU(v.webpCanvasW, v.webpCanvasH), buf, stride, props, bmp.GetAddressOf())))
+        D2D1::SizeU(anim.webpCanvasW, anim.webpCanvasH), buf, stride, props, bmp.GetAddressOf())))
     {
         WebPAnimDecoderDelete(dec);
-        v.webpDecoder = nullptr;
-        v.webpFileData.clear();
+        anim.webpDecoder = nullptr;
+        anim.webpFileData.clear();
         return false;
     }
-    v.bitmap = bmp;
-    v.webpPrevTimestamp = timestamp;
-    v.animType = ViewerState::AnimWebP;
+    outBmp = bmp;
+    anim.webpPrevTimestamp = timestamp;
+    anim.nextDelay = (timestamp > 0) ? timestamp : 100;
+    anim.elapsed = 0;
+    anim.type = AnimState::WebP;
     return true;
 }
 
 // === GIFアニメーション読み込み（WICストリーミング） ===
-static bool TryLoadGifAnimation(const std::wstring& path)
+static bool TryLoadGifAnimation(const std::wstring& path, AnimState& anim, ComPtr<ID2D1Bitmap>& outBmp)
 {
     auto& v = g_app.viewer;
     if (!v.wicFactory || !v.deviceContext) return false;
@@ -825,60 +903,60 @@ static bool TryLoadGifAnimation(const std::wstring& path)
         if (FAILED(v.wicFactory->CreateStream(stream.GetAddressOf()))) return false;
         if (FAILED(stream->InitializeFromMemory(const_cast<BYTE*>(data), (DWORD)size))) return false;
         if (FAILED(v.wicFactory->CreateDecoderFromStream(
-            stream.Get(), nullptr, WICDecodeMetadataCacheOnLoad, v.gifDecoder.GetAddressOf()))) return false;
+            stream.Get(), nullptr, WICDecodeMetadataCacheOnLoad, anim.gifDecoder.GetAddressOf()))) return false;
     }
     else
     {
         if (FAILED(v.wicFactory->CreateDecoderFromFilename(
             path.c_str(), nullptr, GENERIC_READ,
-            WICDecodeMetadataCacheOnLoad, v.gifDecoder.GetAddressOf()))) return false;
+            WICDecodeMetadataCacheOnLoad, anim.gifDecoder.GetAddressOf()))) return false;
     }
 
-    v.gifDecoder->GetFrameCount(&v.gifFrameCount);
-    if (v.gifFrameCount <= 1) { v.gifDecoder.Reset(); return false; }
+    anim.gifDecoder->GetFrameCount(&anim.gifFrameCount);
+    if (anim.gifFrameCount <= 1) { anim.gifDecoder.Reset(); return false; }
 
     // キャンバスサイズ取得（GIFグローバルメタデータ）
     ComPtr<IWICMetadataQueryReader> globalMeta;
-    v.gifCanvasW = 0; v.gifCanvasH = 0;
-    if (SUCCEEDED(v.gifDecoder->GetMetadataQueryReader(globalMeta.GetAddressOf())))
+    anim.gifCanvasW = 0; anim.gifCanvasH = 0;
+    if (SUCCEEDED(anim.gifDecoder->GetMetadataQueryReader(globalMeta.GetAddressOf())))
     {
-        v.gifCanvasW = GetMetadataUI2(globalMeta.Get(), L"/logscrdesc/Width", 0);
-        v.gifCanvasH = GetMetadataUI2(globalMeta.Get(), L"/logscrdesc/Height", 0);
+        anim.gifCanvasW = GetMetadataUI2(globalMeta.Get(), L"/logscrdesc/Width", 0);
+        anim.gifCanvasH = GetMetadataUI2(globalMeta.Get(), L"/logscrdesc/Height", 0);
     }
-    if (v.gifCanvasW == 0 || v.gifCanvasH == 0)
+    if (anim.gifCanvasW == 0 || anim.gifCanvasH == 0)
     {
         // フォールバック: 最初のフレームサイズ
         ComPtr<IWICBitmapFrameDecode> f0;
-        if (SUCCEEDED(v.gifDecoder->GetFrame(0, f0.GetAddressOf())))
-            f0->GetSize(&v.gifCanvasW, &v.gifCanvasH);
+        if (SUCCEEDED(anim.gifDecoder->GetFrame(0, f0.GetAddressOf())))
+            f0->GetSize(&anim.gifCanvasW, &anim.gifCanvasH);
     }
-    if (v.gifCanvasW == 0 || v.gifCanvasH == 0) { v.gifDecoder.Reset(); return false; }
+    if (anim.gifCanvasW == 0 || anim.gifCanvasH == 0) { anim.gifDecoder.Reset(); return false; }
 
     // キャンバス作成
-    v.wicFactory->CreateBitmap(v.gifCanvasW, v.gifCanvasH, GUID_WICPixelFormat32bppPBGRA,
-        WICBitmapCacheOnLoad, v.gifCanvas.GetAddressOf());
-    v.wicFactory->CreateBitmap(v.gifCanvasW, v.gifCanvasH, GUID_WICPixelFormat32bppPBGRA,
-        WICBitmapCacheOnLoad, v.gifPrevCanvas.GetAddressOf());
-    if (!v.gifCanvas) { v.gifDecoder.Reset(); return false; }
+    v.wicFactory->CreateBitmap(anim.gifCanvasW, anim.gifCanvasH, GUID_WICPixelFormat32bppPBGRA,
+        WICBitmapCacheOnLoad, anim.gifCanvas.GetAddressOf());
+    v.wicFactory->CreateBitmap(anim.gifCanvasW, anim.gifCanvasH, GUID_WICPixelFormat32bppPBGRA,
+        WICBitmapCacheOnLoad, anim.gifPrevCanvas.GetAddressOf());
+    if (!anim.gifCanvas) { anim.gifDecoder.Reset(); return false; }
 
-    v.gifCurrentFrame = 0;
-    v.animType = ViewerState::AnimGif;
+    anim.gifCurrentFrame = 0;
+    anim.type = AnimState::Gif;
 
     // 最初のフレーム
     int delay = 100;
-    ComPtr<ID2D1Bitmap> bmp;
-    if (!GifDecodeNextFrame(bmp, delay)) { v.gifDecoder.Reset(); v.gifCanvas.Reset(); return false; }
-    v.bitmap = bmp;
+    if (!GifDecodeNextFrame(anim, outBmp, delay)) { anim.gifDecoder.Reset(); anim.gifCanvas.Reset(); return false; }
+    anim.nextDelay = delay;
+    anim.elapsed = 0;
     return true;
 }
 
 // === アニメーション試行（WebP→GIF の順） ===
-static bool TryLoadAnimation(const std::wstring& path)
+bool TryLoadAnimation(const std::wstring& path, AnimState& anim, ComPtr<ID2D1Bitmap>& outBmp)
 {
     const wchar_t* ext = PathFindExtensionW(path.c_str());
     if (!ext) return false;
-    if (_wcsicmp(ext, L".webp") == 0) return TryLoadWebPAnimation(path);
-    if (_wcsicmp(ext, L".gif") == 0) return TryLoadGifAnimation(path);
+    if (_wcsicmp(ext, L".webp") == 0) return TryLoadWebPAnimation(path, anim, outBmp);
+    if (_wcsicmp(ext, L".gif") == 0) return TryLoadGifAnimation(path, anim, outBmp);
     return false;
 }
 
@@ -890,24 +968,8 @@ void ViewerStopAnimation()
         g_app.viewer.animTimer = 0;
     }
     g_app.viewer.isAnimating = false;
-    g_app.viewer.animType = ViewerState::AnimNone;
-
-    // WebP cleanup
-    if (g_app.viewer.webpDecoder)
-    {
-        DeleteWebPDecoder();
-        g_app.viewer.webpDecoder = nullptr;
-    }
-    g_app.viewer.webpFileData.clear();
-    g_app.viewer.webpCanvasW = g_app.viewer.webpCanvasH = 0;
-
-    // GIF cleanup
-    g_app.viewer.gifDecoder.Reset();
-    g_app.viewer.gifCanvas.Reset();
-    g_app.viewer.gifPrevCanvas.Reset();
-    g_app.viewer.gifFrameCount = 0;
-    g_app.viewer.gifCurrentFrame = 0;
-    g_app.viewer.gifCanvasW = g_app.viewer.gifCanvasH = 0;
+    AnimStateReset(g_app.viewer.anim1);
+    AnimStateReset(g_app.viewer.anim2);
 
     // レガシー cleanup
     g_app.viewer.animFrames.clear();
@@ -926,14 +988,15 @@ void ViewerLoadImage(const std::wstring& path)
     g_app.viewer.rotation = 0;
 
     // アニメーション試行
-    if (TryLoadAnimation(path))
+    if (TryLoadAnimation(path, g_app.viewer.anim1, g_app.viewer.bitmap))
     {
         g_app.viewer.isAnimating = true;
+        g_app.viewer.lastAnimTick = GetTickCount();
         g_app.nav.currentPath = path;
         g_app.viewer.zoom = 1.0f;
         g_app.viewer.scrollX = 0.0f;
         g_app.viewer.scrollY = 0.0f;
-        g_app.viewer.animTimer = SetTimer(g_app.wnd.hwndViewer, kAnimTimerId, 100, nullptr);
+        g_app.viewer.animTimer = SetTimer(g_app.wnd.hwndViewer, kAnimTimerId, 16, nullptr);
         InvalidateRect(g_app.wnd.hwndViewer, nullptr, FALSE);
         return;
     }
@@ -970,9 +1033,39 @@ static IWICImagingFactory* GetAsyncWicFactory()
     return tl_asyncWicFactory.Get();
 }
 
-static std::atomic<int> g_asyncDecodeGeneration{0}; // キャンセル用世代番号
+// g_asyncDecodeGeneration はファイル先頭で定義済み
 
 int GetAsyncDecodeGeneration() { return g_asyncDecodeGeneration.load(); }
+void InvalidateAsyncDecode() { ++g_asyncDecodeGeneration; }
+
+void ViewerStartAnimationIfNeeded(const std::wstring& path1, const std::wstring& path2)
+{
+    auto isAnimExt = [](const std::wstring& p) {
+        const wchar_t* ext = PathFindExtensionW(p.c_str());
+        return ext && (_wcsicmp(ext, L".gif") == 0 || _wcsicmp(ext, L".webp") == 0);
+    };
+    bool a1 = false, a2 = false;
+    if (isAnimExt(path1))
+        a1 = TryLoadAnimation(path1, g_app.viewer.anim1, g_app.viewer.bitmap);
+    if (!path2.empty() && isAnimExt(path2))
+        a2 = TryLoadAnimation(path2, g_app.viewer.anim2, g_app.viewer.bitmap2);
+    if (a1 || a2) {
+        ++g_asyncDecodeGeneration; // アニメ開始後の古い非同期結果を無効化
+        g_app.viewer.isAnimating = true;
+        g_app.viewer.lastAnimTick = GetTickCount();
+        g_app.viewer.animTimer = SetTimer(g_app.wnd.hwndViewer, kAnimTimerId, 16, nullptr);
+    }
+}
+
+bool IsConfirmedAnimation(const std::wstring& path)
+{
+    const wchar_t* ext = PathFindExtensionW(path.c_str());
+    if (!ext || (_wcsicmp(ext, L".gif") != 0 && _wcsicmp(ext, L".webp") != 0))
+        return false;
+    UINT w = 0, h = 0, fc = 0;
+    if (GetImageSize(path, w, h, true, &fc) && fc > 1) return true;
+    return false;
+}
 
 void ViewerLoadImageAsync(const std::wstring& path)
 {
@@ -981,24 +1074,38 @@ void ViewerLoadImageAsync(const std::wstring& path)
         const wchar_t* ext = PathFindExtensionW(path.c_str());
         if (ext && (_wcsicmp(ext, L".gif") == 0 || _wcsicmp(ext, L".webp") == 0))
         {
-            ViewerStopAnimation();
-            g_app.viewer.bitmap.Reset();
-            g_app.viewer.bitmap2.Reset();
-            g_app.viewer.isSpreadActive = false;
-            g_app.viewer.rotation = 0;
+            // サイズキャッシュでフレーム数を確認（cacheOnly=trueでI/Oなし）
+            UINT tw = 0, th = 0, tfc = 0;
+            bool sizeKnown = GetImageSize(path, tw, th, true, &tfc);
 
-            if (TryLoadAnimation(path))
+            // 確実にアニメーション（フレーム数>1）の場合のみ同期パスで試行
+            // サイズ不明の場合は非同期デコードに任せる（メインスレッドで書庫展開しない）
+            if (sizeKnown && tfc > 1)
             {
-                g_app.viewer.isAnimating = true;
-                g_app.nav.currentPath = path;
-                g_app.viewer.zoom = 1.0f;
-                g_app.viewer.scrollX = 0.0f;
-                g_app.viewer.scrollY = 0.0f;
-                g_app.viewer.animTimer = SetTimer(g_app.wnd.hwndViewer, kAnimTimerId, 100, nullptr);
-                InvalidateRect(g_app.wnd.hwndViewer, nullptr, FALSE);
-                return;
+                ViewerStopAnimation();
+
+                ComPtr<ID2D1Bitmap> animBmp;
+                AnimState animState;
+                if (TryLoadAnimation(path, animState, animBmp))
+                {
+                    ++g_asyncDecodeGeneration;
+                    g_app.viewer.anim1 = std::move(animState);
+                    g_app.viewer.bitmap = animBmp;
+                    g_app.viewer.bitmap2.Reset();
+                    g_app.viewer.isSpreadActive = false;
+                    g_app.viewer.isAnimating = true;
+                    g_app.viewer.lastAnimTick = GetTickCount();
+                    g_app.viewer.rotation = 0;
+                    g_app.nav.currentPath = path;
+                    g_app.viewer.zoom = 1.0f;
+                    g_app.viewer.scrollX = 0.0f;
+                    g_app.viewer.scrollY = 0.0f;
+                    g_app.viewer.animTimer = SetTimer(g_app.wnd.hwndViewer, kAnimTimerId, 16, nullptr);
+                    InvalidateRect(g_app.wnd.hwndViewer, nullptr, FALSE);
+                    return;
+                }
             }
-            // 静止画GIF/WebPの場合: 通常パスへフォールバック
+            // 静止画 or サイズ不明: 通常の非同期デコードへフォールバック
         }
     }
 
@@ -1006,6 +1113,7 @@ void ViewerLoadImageAsync(const std::wstring& path)
     auto cached = CacheGet(path);
     if (cached)
     {
+        ++g_asyncDecodeGeneration; // 保留中の非同期デコード結果を無効化
         ViewerStopAnimation();
         g_app.viewer.bitmap = cached;
         g_app.viewer.bitmap2.Reset();
@@ -1016,6 +1124,8 @@ void ViewerLoadImageAsync(const std::wstring& path)
         g_app.viewer.scrollX = 0.0f;
         g_app.viewer.scrollY = 0.0f;
         InvalidateRect(g_app.wnd.hwndViewer, nullptr, FALSE);
+        // キャッシュヒットでもアニメGIF/WebPならアニメ開始
+        ViewerStartAnimationIfNeeded(path);
         return;
     }
 
@@ -1081,10 +1191,18 @@ void ViewerLoadImageAsync(const std::wstring& path)
 
 void ViewerLoadSpreadAsync(const std::wstring& path1, const std::wstring& path2)
 {
+    // 確実にアニメーション（サイズキャッシュでフレーム数>1確認済み）の場合のみ同期パスへ
+    if (IsConfirmedAnimation(path1) || IsConfirmedAnimation(path2))
+    {
+        ViewerShowSpread(path1, path2);
+        return;
+    }
+
     // キャッシュヒット時は即座に見開き表示
     auto cached1 = CacheGet(path1);
     auto cached2 = CacheGet(path2);
     if (cached1 && cached2) {
+        InvalidateAsyncDecode();
         ViewerStopAnimation();
         g_app.viewer.bitmap = cached1;
         g_app.viewer.bitmap2 = cached2;
@@ -1093,6 +1211,8 @@ void ViewerLoadSpreadAsync(const std::wstring& path1, const std::wstring& path2)
         g_app.nav.currentPath = path1;
         ViewerResetView();
         InvalidateRect(g_app.wnd.hwndViewer, nullptr, FALSE);
+        // キャッシュヒットでもアニメ開始
+        ViewerStartAnimationIfNeeded(path1, path2);
         return;
     }
 
@@ -1200,27 +1320,37 @@ void ViewerShowSpread(const std::wstring& path1, const std::wstring& path2)
 {
     if (!g_app.viewer.deviceContext) return;
 
+    ++g_asyncDecodeGeneration; // 保留中の非同期デコード結果を無効化
     ViewerStopAnimation();
     g_app.viewer.bitmap.Reset();
     g_app.viewer.bitmap2.Reset();
     g_app.viewer.isSpreadActive = false;
 
-    bool ok1 = LoadBitmapCached(path1, g_app.viewer.bitmap);
-    bool ok2 = LoadBitmapCached(path2, g_app.viewer.bitmap2);
+    bool a1 = TryLoadAnimation(path1, g_app.viewer.anim1, g_app.viewer.bitmap);
+    if (!a1) LoadBitmapCached(path1, g_app.viewer.bitmap);
 
-    if (ok1 && ok2)
+    bool a2 = TryLoadAnimation(path2, g_app.viewer.anim2, g_app.viewer.bitmap2);
+    if (!a2) LoadBitmapCached(path2, g_app.viewer.bitmap2);
+
+    if (g_app.viewer.bitmap && g_app.viewer.bitmap2)
     {
         g_app.viewer.isSpreadActive = true;
         g_app.nav.currentPath = path1;
     }
-    else if (ok1)
+    else if (g_app.viewer.bitmap)
     {
+        g_app.viewer.isSpreadActive = false;
         g_app.nav.currentPath = path1;
     }
 
-    g_app.viewer.zoom = 1.0f;
-    g_app.viewer.scrollX = 0.0f;
-    g_app.viewer.scrollY = 0.0f;
+    if (a1 || a2)
+    {
+        g_app.viewer.isAnimating = true;
+        g_app.viewer.lastAnimTick = GetTickCount();
+        g_app.viewer.animTimer = SetTimer(g_app.wnd.hwndViewer, kAnimTimerId, 16, nullptr);
+    }
+
+    ViewerResetView();
     InvalidateRect(g_app.wnd.hwndViewer, nullptr, FALSE);
 }
 
@@ -1325,7 +1455,6 @@ static bool IsPortrait(const std::wstring& path, bool cacheOnly = false, bool* s
     bool got = GetImageSize(path, w, h, cacheOnly, &frameCount);
     if (sizeKnown) *sizeKnown = got && w > 0 && h > 0;
     if (!got || w == 0 || h == 0) return true; // 取得失敗は縦向き扱い
-    if (frameCount > 1) return false; // アニメーションは見開き不可（横向き扱い）
     const auto& s = GetCachedSettings();
     return (float)w / h <= s.spreadThreshold;
 }

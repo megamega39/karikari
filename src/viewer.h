@@ -19,8 +19,12 @@ void ClearSpreadCache();
 int GetPagesPerView();
 int ViewerGetEffectiveZoomPercent();
 void CacheImageSize(const std::wstring& path, UINT w, UINT h);
+bool IsConfirmedAnimation(const std::wstring& path); // サイズキャッシュでフレーム数>1を確認
+bool TryLoadAnimation(const std::wstring& path, AnimState& anim, ComPtr<ID2D1Bitmap>& outBmp);
+void ViewerStartAnimationIfNeeded(const std::wstring& path1, const std::wstring& path2 = L"");
 void ViewerLoadImageAsync(const std::wstring& path); // 非同期版: キャッシュミス時にUIをブロックしない
 int GetAsyncDecodeGeneration(); // 現在の非同期デコード世代番号を返す（古い結果の棄却用）
+void InvalidateAsyncDecode();   // 保留中の非同期デコード結果を無効化
 void ViewerSetBitmap(ComPtr<ID2D1Bitmap> bmp, const std::wstring& path);
 void ViewerResetView();
 constexpr UINT WM_ASYNC_DECODE_DONE = WM_APP + 9;

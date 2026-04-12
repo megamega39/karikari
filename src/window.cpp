@@ -30,6 +30,10 @@
 #include <atomic>
 #include <tuple>
 
+// グローバルUIフォント
+HFONT g_uiFont = nullptr;
+HFONT g_uiFontBold = nullptr;
+
 // 基準レイアウト定数（96dpi）
 // パス復元用グローバル（CreateMainWindow → WM_RESTORE_LAST_PATH で共有）
 std::wstring g_restorePath;
@@ -46,6 +50,68 @@ static constexpr int kViewerToolbarH_96 = 36;
 static constexpr int kMinPanelSize_96 = 100;
 
 static int DpiScale(int value, UINT dpi) { return MulDiv(value, dpi, 96); }
+
+void ApplyFontSize(int fontSize)
+{
+    int size = -(fontSize + 3); // fontSize=9 → -12
+    if (g_uiFont) DeleteObject(g_uiFont);
+    if (g_uiFontBold) DeleteObject(g_uiFontBold);
+    g_uiFont = CreateFontW(size, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+        DEFAULT_CHARSET, 0, 0, CLEARTYPE_QUALITY, 0, L"Yu Gothic UI");
+    g_uiFontBold = CreateFontW(size, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE,
+        DEFAULT_CHARSET, 0, 0, CLEARTYPE_QUALITY, 0, L"Yu Gothic UI");
+
+    // 全UIウィンドウにWM_SETFONT送信（アイコンフォントは対象外）
+    auto set = [](HWND h, HFONT f) { if (h) SendMessageW(h, WM_SETFONT, (WPARAM)f, TRUE); };
+    set(g_app.wnd.hwndTree, g_uiFont);
+    set(g_app.wnd.hwndList, g_uiFont);
+    set(g_app.wnd.hwndStatusBar, g_uiFont);
+    set(g_app.wnd.hwndFilterBox, g_uiFont);
+    set(g_app.wnd.hwndHistoryList, g_uiFont);
+    set(g_app.wnd.hwndHistoryFilter, g_uiFont);
+    set(g_app.wnd.hwndHistoryToolbar, g_uiFont);
+    set(g_app.wnd.hwndFolderLabel, g_uiFont);
+    set(g_app.wnd.hwndBookshelfToolbar, g_uiFont);
+}
+
+void RebuildUI()
+{
+    // ナビバーツールチップを更新
+    UpdateNavbarTooltips();
+
+    // ラベルテキストを現在の言語に更新
+    if (g_app.wnd.hwndFolderLabel)
+        SetWindowTextW(g_app.wnd.hwndFolderLabel, I18nGet(L"ui.folder").c_str());
+    if (g_app.wnd.hwndAddressLabel)
+        SetWindowTextW(g_app.wnd.hwndAddressLabel, I18nGet(L"ui.address").c_str());
+
+    // ツリー再構築（展開状態とスクロール位置を保持）
+    RefreshTree();
+
+    // ファイルリストのカラムヘッダーを言語に合わせて更新
+    if (g_app.wnd.hwndList)
+    {
+        LVCOLUMNW lvc = {};
+        lvc.mask = LVCF_TEXT;
+        lvc.pszText = (LPWSTR)I18nGet(L"list.name").c_str();
+        SendMessageW(g_app.wnd.hwndList, LVM_SETCOLUMNW, 0, (LPARAM)&lvc);
+        lvc.pszText = (LPWSTR)I18nGet(L"list.size").c_str();
+        SendMessageW(g_app.wnd.hwndList, LVM_SETCOLUMNW, 1, (LPARAM)&lvc);
+        lvc.pszText = (LPWSTR)I18nGet(L"list.type").c_str();
+        SendMessageW(g_app.wnd.hwndList, LVM_SETCOLUMNW, 2, (LPARAM)&lvc);
+        lvc.pszText = (LPWSTR)I18nGet(L"list.date").c_str();
+        SendMessageW(g_app.wnd.hwndList, LVM_SETCOLUMNW, 3, (LPARAM)&lvc);
+    }
+
+    // ファイルリスト再描画（種類テキスト等の更新）
+    PopulateListView();
+
+    // レイアウト更新
+    LayoutChildren(g_app.wnd.hwndMain);
+
+    // 全体再描画
+    InvalidateRect(g_app.wnd.hwndMain, nullptr, TRUE);
+}
 
 void LayoutChildren(HWND hwndParent)
 {
@@ -440,16 +506,16 @@ static void HandleNotify(HWND hwnd, LPNMHDR pnm)
         const wchar_t* text = nullptr;
         switch (tip->iItem)
         {
-        case IDM_NAV_BACK:      text = L"戻る (Alt+←)"; break;
-        case IDM_NAV_FORWARD:   text = L"進む (Alt+→)"; break;
-        case IDM_NAV_UP:        text = L"上へ (Alt+↑)"; break;
-        case IDM_NAV_REFRESH:   text = L"更新 (F5)"; break;
-        case IDM_NAV_BOOKSHELF: text = L"本棚"; break;
-        case IDM_NAV_HISTORY:   text = L"履歴"; break;
-        case IDM_NAV_LIST:      text = L"リスト表示"; break;
-        case IDM_NAV_GRID:      text = L"グリッド表示"; break;
-        case IDM_NAV_SETTINGS:  text = L"設定"; break;
-        case IDM_NAV_HELP:      text = L"ヘルプ (F1)"; break;
+        case IDM_NAV_BACK:      { static std::wstring s; s = I18nGet(L"nav.back") + L" (Alt+\u2190)"; text = s.c_str(); } break;
+        case IDM_NAV_FORWARD:   { static std::wstring s; s = I18nGet(L"nav.forward") + L" (Alt+\u2192)"; text = s.c_str(); } break;
+        case IDM_NAV_UP:        { static std::wstring s; s = I18nGet(L"nav.up") + L" (Alt+\u2191)"; text = s.c_str(); } break;
+        case IDM_NAV_REFRESH:   { static std::wstring s; s = I18nGet(L"nav.refresh") + L" (F5)"; text = s.c_str(); } break;
+        case IDM_NAV_BOOKSHELF: text = I18nGet(L"ui.bookshelf").c_str(); break;
+        case IDM_NAV_HISTORY:   text = I18nGet(L"ui.history").c_str(); break;
+        case IDM_NAV_LIST:      text = I18nGet(L"nav.list").c_str(); break;
+        case IDM_NAV_GRID:      text = I18nGet(L"nav.grid").c_str(); break;
+        case IDM_NAV_SETTINGS:  text = I18nGet(L"ui.settings").c_str(); break;
+        case IDM_NAV_HELP:      { static std::wstring s; s = I18nGet(L"ui.help") + L" (F1)"; text = s.c_str(); } break;
         }
         if (text && tip->pszText && tip->cchTextMax > 0)
             wcsncpy_s(tip->pszText, tip->cchTextMax, text, _TRUNCATE);
@@ -839,14 +905,17 @@ void ToggleFullscreen(HWND hwnd)
                      mi.rcMonitor.bottom - mi.rcMonitor.top,
                      SWP_FRAMECHANGED);
 
-        // UI非表示（メディアプレーヤーはLayoutChildrenで制御）
+        // 全UI非表示（メディアプレーヤー/ビューアーはLayoutChildrenで制御）
         for (HWND h : { g_app.wnd.hwndNavBar, g_app.wnd.hwndNavBarRight,
                         g_app.wnd.hwndAddressLabel, g_app.wnd.hwndAddressEdit,
                         g_app.wnd.hwndFolderLabel, g_app.wnd.hwndTreeSortBtn,
-                        g_app.wnd.hwndTree, g_app.wnd.hwndFilterBox,
+                        g_app.wnd.hwndTree, g_app.wnd.hwndFilterBox, g_app.wnd.hwndFilterPad,
                         g_app.wnd.hwndList, g_app.wnd.hwndMainSplitter,
                         g_app.wnd.hwndSidebarSplitter, g_app.wnd.hwndViewerTbLeft,
-                        g_app.wnd.hwndViewerTbRight, g_app.wnd.hwndStatusBar })
+                        g_app.wnd.hwndViewerTbRight, g_app.wnd.hwndStatusBar,
+                        g_app.wnd.hwndBookshelfToolbar, g_app.wnd.hwndBookshelfSortBtn,
+                        g_app.wnd.hwndHistoryToolbar, g_app.wnd.hwndHistoryList,
+                        g_app.wnd.hwndHistoryFilter })
             if (h) ShowWindow(h, SW_HIDE);
 
         g_app.isFullscreen = true;
@@ -862,15 +931,35 @@ void ToggleFullscreen(HWND hwnd)
                      g_app.savedRect.bottom - g_app.savedRect.top,
                      SWP_FRAMECHANGED | SWP_NOZORDER);
 
-        // UI再表示（メディアプレーヤーはLayoutChildrenで制御）
+        // 共通UI再表示
         for (HWND h : { g_app.wnd.hwndNavBar, g_app.wnd.hwndNavBarRight,
                         g_app.wnd.hwndAddressLabel, g_app.wnd.hwndAddressEdit,
-                        g_app.wnd.hwndFolderLabel, g_app.wnd.hwndTreeSortBtn,
-                        g_app.wnd.hwndTree, g_app.wnd.hwndFilterBox,
+                        g_app.wnd.hwndSidebarSplitter, g_app.wnd.hwndFilterBox, g_app.wnd.hwndFilterPad,
                         g_app.wnd.hwndList, g_app.wnd.hwndMainSplitter,
-                        g_app.wnd.hwndSidebarSplitter, g_app.wnd.hwndViewerTbLeft,
-                        g_app.wnd.hwndViewerTbRight, g_app.wnd.hwndStatusBar })
+                        g_app.wnd.hwndViewerTbLeft, g_app.wnd.hwndViewerTbRight,
+                        g_app.wnd.hwndStatusBar })
             if (h) ShowWindow(h, SW_SHOW);
+        // モード別UI再表示
+        if (GetTreeMode() == 0)
+        {
+            // 通常モード
+            if (g_app.wnd.hwndFolderLabel) ShowWindow(g_app.wnd.hwndFolderLabel, SW_SHOW);
+            if (g_app.wnd.hwndTreeSortBtn) ShowWindow(g_app.wnd.hwndTreeSortBtn, SW_SHOW);
+            if (g_app.wnd.hwndTree) ShowWindow(g_app.wnd.hwndTree, SW_SHOW);
+        }
+        else if (GetTreeMode() == 1)
+        {
+            // 本棚モード
+            if (g_app.wnd.hwndBookshelfToolbar) ShowWindow(g_app.wnd.hwndBookshelfToolbar, SW_SHOW);
+            if (g_app.wnd.hwndTree) ShowWindow(g_app.wnd.hwndTree, SW_SHOW);
+        }
+        else if (GetTreeMode() == 2)
+        {
+            // 履歴モード
+            if (g_app.wnd.hwndHistoryToolbar) ShowWindow(g_app.wnd.hwndHistoryToolbar, SW_SHOW);
+            if (g_app.wnd.hwndHistoryList) ShowWindow(g_app.wnd.hwndHistoryList, SW_SHOW);
+            if (g_app.wnd.hwndHistoryFilter) ShowWindow(g_app.wnd.hwndHistoryFilter, SW_SHOW);
+        }
 
         g_app.isFullscreen = false;
     }
@@ -902,7 +991,7 @@ static LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
 
         // 「フォルダ」ラベル（TreeViewの上）
         g_app.wnd.hwndFolderLabel = CreateWindowExW(
-            0, L"STATIC", L"フォルダ",
+            0, L"STATIC", I18nGet(L"ui.folder").c_str(),
             WS_CHILD | WS_VISIBLE | SS_CENTERIMAGE,
             0, 0, 100, 20,
             hwnd, nullptr, hInst, nullptr);
@@ -935,7 +1024,7 @@ static LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
             static HFONT hIconFont = CreateFontW(-12, 0, 0, 0, FW_NORMAL, 0, 0, 0, DEFAULT_CHARSET, 0, 0, ANTIALIASED_QUALITY, 0, L"Segoe Fluent Icons");
             SendMessageW(hIcon, WM_SETFONT, (WPARAM)(hIconFont ? hIconFont : hShelfFont), TRUE);
 
-            HWND hLabel = CreateWindowExW(0, L"STATIC", L"本棚",
+            HWND hLabel = CreateWindowExW(0, L"STATIC", I18nGet(L"ui.bookshelf").c_str(),
                 WS_CHILD | WS_VISIBLE | SS_CENTERIMAGE, 26, 3, 40, 22, g_app.wnd.hwndBookshelfToolbar, nullptr, hInst, nullptr);
             SendMessageW(hLabel, WM_SETFONT, (WPARAM)hShelfFont, TRUE);
 
@@ -1043,7 +1132,7 @@ static LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
 
         // ListView フルロウ選択
         SendMessageW(g_app.wnd.hwndList, LVM_SETEXTENDEDLISTVIEWSTYLE, 0,
-                     LVS_EX_FULLROWSELECT | LVS_EX_DOUBLEBUFFER);
+                     LVS_EX_FULLROWSELECT | LVS_EX_DOUBLEBUFFER | LVS_EX_HEADERDRAGDROP);
 
         // 背景色を薄い水色に設定（leeyez_kai準拠 #EBF4FF）
         SendMessageW(g_app.wnd.hwndList, LVM_SETBKCOLOR, 0, (LPARAM)RGB(235, 244, 255));
@@ -1139,6 +1228,19 @@ static LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
         lvc.pszText = (LPWSTR)L"更新日時";
         SendMessageW(g_app.wnd.hwndList, LVM_INSERTCOLUMNW, 3, (LPARAM)&lvc);
 
+        // 保存された列順序・幅を復元
+        {
+            AppSettings colSettings;
+            if (LoadSettings(colSettings))
+            {
+                if (colSettings.columnOrder.size() == 4)
+                    ListView_SetColumnOrderArray(g_app.wnd.hwndList, 4, colSettings.columnOrder.data());
+                if (colSettings.columnWidths.size() == 4)
+                    for (int i = 0; i < 4; i++)
+                        ListView_SetColumnWidth(g_app.wnd.hwndList, i, colSettings.columnWidths[i]);
+            }
+        }
+
         // 履歴ツールバー（初期非表示）
         {
             static HFONT hHistFont = CreateFontW(-12, 0, 0, 0, FW_NORMAL, 0, 0, 0, DEFAULT_CHARSET, 0, 0, CLEARTYPE_QUALITY, 0, L"Segoe UI");
@@ -1150,7 +1252,7 @@ static LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
             static HFONT hIconFont = CreateFontW(-12, 0, 0, 0, FW_NORMAL, 0, 0, 0, DEFAULT_CHARSET, 0, 0, ANTIALIASED_QUALITY, 0, L"Segoe Fluent Icons");
             SendMessageW(hIcon, WM_SETFONT, (WPARAM)(hIconFont ? hIconFont : hHistFont), TRUE);
 
-            HWND hLabel = CreateWindowExW(0, L"STATIC", L"履歴",
+            HWND hLabel = CreateWindowExW(0, L"STATIC", I18nGet(L"ui.history").c_str(),
                 WS_CHILD | WS_VISIBLE | SS_CENTERIMAGE, 26, 3, 40, 22, g_app.wnd.hwndHistoryToolbar, nullptr, hInst, nullptr);
             SendMessageW(hLabel, WM_SETFONT, (WPARAM)hHistFont, TRUE);
 
@@ -1259,13 +1361,13 @@ static LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
         // メディアプレーヤー（初期非表示）
         // MediaPlayer は遅延初期化（MediaPlay 初回呼び出し時に作成）
 
-        // フォント統一（Yu Gothic UI 9pt）
+        // フォント・サムネイル・プレビューサイズを設定値で初期化
         {
-            static HFONT hUIFont = CreateFontW(-12, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
-                DEFAULT_CHARSET, 0, 0, CLEARTYPE_QUALITY, 0, L"Yu Gothic UI");
-            for (HWND h : { g_app.wnd.hwndTree, g_app.wnd.hwndList, g_app.wnd.hwndFilterBox,
-                            g_app.wnd.hwndStatusBar, g_app.wnd.hwndHistoryList })
-                if (h) SendMessageW(h, WM_SETFONT, (WPARAM)hUIFont, TRUE);
+            AppSettings initSettings;
+            LoadSettings(initSettings);
+            ApplyFontSize(initSettings.fontSize);
+            ApplyThumbnailSize(initSettings.thumbnailSize);
+            ApplyPreviewSize(initSettings.previewSize);
         }
 
         InitListView();
@@ -1434,7 +1536,10 @@ static LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
                 g_app.nav.currentPath = msg->path;
                 InvalidateRect(g_app.wnd.hwndViewer, nullptr, FALSE);
 
-                auto size = d2dBmp->GetSize();
+                // アニメーション開始（非同期デコード完了後、StreamCacheにデータあり）
+                ViewerStartAnimationIfNeeded(msg->path);
+
+                auto size = d2dBmp->GetPixelSize();
                 int total = (int)g_app.nav.viewableFiles.size();
                 wchar_t pageInfo[64];
                 swprintf_s(pageInfo, _countof(pageInfo), L"%d / %d", g_app.nav.currentFileIndex + 1, total);
@@ -1473,8 +1578,12 @@ static LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
                 g_app.viewer.scrollX = 0.0f;
                 g_app.viewer.scrollY = 0.0f;
                 InvalidateRect(g_app.wnd.hwndViewer, nullptr, FALSE);
+
+                // アニメーション開始（非同期デコード完了後、StreamCacheにデータあり）
+                ViewerStartAnimationIfNeeded(msg->path1, msg->path2);
+
                 // ステータスバー更新
-                auto size = bmp1->GetSize();
+                auto size = bmp1->GetPixelSize();
                 int total = (int)g_app.nav.viewableFiles.size();
                 wchar_t pageInfo[64];
                 swprintf_s(pageInfo, _countof(pageInfo), L"%d / %d", g_app.nav.currentFileIndex + 1, total);
@@ -1588,11 +1697,11 @@ static LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
         if (wParam == kTreeNavTimer)
         {
             KillTimer(hwnd, kTreeNavTimer);
-            if (!g_pendingTreePath.empty())
+            if (!g_pendingTreePath.empty() && GetTreeMode() == 0)
             {
                 NavigateTo(g_pendingTreePath, { true, false });
-                g_pendingTreePath.clear();
             }
+            g_pendingTreePath.clear();
         }
         if (wParam == 100) // kIdlePrefetchTimer（nav.cppで定義）
         {
@@ -1627,6 +1736,21 @@ static LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
         settings.viewMode = g_app.viewer.viewMode;
         settings.isRTL = g_app.viewer.isRTL;
         settings.scaleMode = (int)g_app.viewer.scaleMode;
+
+        // ファイルリスト列順序・幅を保存
+        if (g_app.wnd.hwndList)
+        {
+            int colCount = Header_GetItemCount(ListView_GetHeader(g_app.wnd.hwndList));
+            if (colCount > 0)
+            {
+                settings.columnOrder.resize(colCount);
+                ListView_GetColumnOrderArray(g_app.wnd.hwndList, colCount, settings.columnOrder.data());
+                settings.columnWidths.resize(colCount);
+                for (int i = 0; i < colCount; i++)
+                    settings.columnWidths[i] = ListView_GetColumnWidth(g_app.wnd.hwndList, i);
+            }
+        }
+
         SaveSettings(settings);
 
         // 表示中の画像をキャッシュに保存（次回起動時に即表示）

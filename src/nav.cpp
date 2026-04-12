@@ -1,4 +1,5 @@
 ﻿#include "nav.h"
+#include "navbar.h"
 #include "filelist.h"
 #include "utils.h"
 #include "settings.h"
@@ -33,7 +34,7 @@ static bool g_navWrapLoaded = false;
 static bool g_navSettingsChanged = false;
 
 // 書庫内ファイルリストをListViewに表示
-static void LoadArchiveToList(const std::wstring& archivePath)
+void LoadArchiveToList(const std::wstring& archivePath)
 {
     g_app.nav.fileItems.clear();
     g_app.nav.viewableFiles.clear();
@@ -215,6 +216,7 @@ void NavigateTo(const std::wstring& path, NavigateOptions opts)
             {
                 g_app.nav.historyBack.push_back(g_app.nav.currentArchive);
                 g_app.nav.historyForward.clear();
+                NavUpdateButtons();
             }
         }
 
@@ -241,6 +243,7 @@ void NavigateTo(const std::wstring& path, NavigateOptions opts)
             {
                 g_app.nav.historyBack.push_back(g_app.nav.currentArchive);
                 g_app.nav.historyForward.clear();
+                NavUpdateButtons();
             }
         }
 
@@ -378,6 +381,7 @@ void NavigateBack()
     if (g_app.nav.inArchiveMode && !g_app.nav.currentArchive.empty())
         g_app.nav.historyForward.push_back(g_app.nav.currentArchive);
 
+    NavUpdateButtons();
     NavigateTo(path, { false, true });
 }
 
@@ -391,6 +395,7 @@ void NavigateForward()
     // 書庫モードの場合のみ現在地を戻る履歴に入れる
     if (g_app.nav.inArchiveMode && !g_app.nav.currentArchive.empty())
         g_app.nav.historyBack.push_back(g_app.nav.currentArchive);
+    NavUpdateButtons();
 
     NavigateTo(path, { false, true });
 }
@@ -526,39 +531,40 @@ static void DisplayImageFile(int index, const std::wstring& path)
 
         if (isArc1 && isArc2)
         {
-            // 2枚とも書庫内 → キャッシュヒットなら即見開き、ミスなら非同期デコード
-            auto cached1 = CacheGet(path);
-            std::wstring key2 = arcPath2 + L"!" + entry2;
-            auto cached2 = CacheGet(key2);
-            if (cached1 && cached2)
-            {
-                ViewerStopAnimation();
-                g_app.viewer.bitmap = cached1;
-                g_app.viewer.bitmap2 = cached2;
-                g_app.viewer.isSpreadActive = true;
-                g_app.viewer.rotation = 0;
-                g_app.nav.currentPath = path;
-                ViewerResetView();
-                InvalidateRect(g_app.wnd.hwndViewer, nullptr, FALSE);
-            }
-            else
-            {
-                ViewerLoadSpreadAsync(path, path2);
-            }
-        }
-        else
-        {
-            // 通常ファイル見開き: 両方キャッシュヒットなら即見開き、ミスなら非同期デコード
-            auto cached1 = CacheGet(path);
-            auto cached2 = CacheGet(path2);
-            if (cached1 && cached2)
+            // 書庫内見開き: 確実にアニメーション（サイズキャッシュでフレーム数>1確認済み）の場合のみViewerShowSpread
+            if (IsConfirmedAnimation(path) || IsConfirmedAnimation(path2))
             {
                 ViewerShowSpread(path, path2);
             }
             else
             {
-                ViewerLoadSpreadAsync(path, path2);
+                auto cached1 = CacheGet(path);
+                std::wstring key2 = arcPath2 + L"!" + entry2;
+                auto cached2 = CacheGet(key2);
+                if (cached1 && cached2)
+                {
+                    InvalidateAsyncDecode();
+                    ViewerStopAnimation();
+                    g_app.viewer.bitmap = cached1;
+                    g_app.viewer.bitmap2 = cached2;
+                    g_app.viewer.isSpreadActive = true;
+                    g_app.viewer.rotation = 0;
+                    g_app.nav.currentPath = path;
+                    ViewerResetView();
+                    InvalidateRect(g_app.wnd.hwndViewer, nullptr, FALSE);
+                    // キャッシュヒットでもアニメ開始
+                    ViewerStartAnimationIfNeeded(path, path2);
+                }
+                else
+                {
+                    ViewerLoadSpreadAsync(path, path2);
+                }
             }
+        }
+        else
+        {
+            // 通常ファイル見開き
+            ViewerLoadSpreadAsync(path, path2);
         }
     }
     else
@@ -620,7 +626,7 @@ static void SyncListViewAndStatus(int index, const std::wstring& path)
     // タイトルバーにファイル名 + ページ情報
     std::wstring fileName = PathBaseName(path);
     wchar_t title[512];
-    swprintf_s(title, _countof(title), L"%s - %d/%d - karikari", fileName.c_str(), index + 1, total);
+    swprintf_s(title, _countof(title), L"karikari - %s - %d/%d", fileName.c_str(), index + 1, total);
     SetWindowTextW(g_app.wnd.hwndMain, title);
 }
 
@@ -796,4 +802,5 @@ void NavHistoryLoad()
         if (section == 0) g_app.nav.historyBack.push_back(line);
         else if (section == 1) g_app.nav.historyForward.push_back(line);
     }
+    NavUpdateButtons();
 }

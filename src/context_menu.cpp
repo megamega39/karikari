@@ -8,6 +8,8 @@
 #include <shlwapi.h>
 #include <shlobj.h>
 #include <shellapi.h>
+#include "media.h"
+#include "viewer.h"
 #include <wincodec.h>
 #include <wrl/client.h>
 
@@ -105,12 +107,26 @@ void CopyToClipboard(HWND hwnd, const std::wstring& text)
 
 void ShowInExplorer(const std::wstring& path)
 {
-    // SHOpenFolderAndSelectItems（PIDL経由、コマンドインジェクション不可）
-    PIDLIST_ABSOLUTE pidl = nullptr;
-    if (SUCCEEDED(SHParseDisplayName(path.c_str(), nullptr, &pidl, 0, nullptr)))
+    // 書庫内パスの場合は書庫ファイル自体を対象にする
+    std::wstring realPath = path;
+    std::wstring arcPath, entryPath;
+    if (SplitArchivePath(path, arcPath, entryPath))
+        realPath = arcPath;
+
+    DWORD attr = GetFileAttributesW(realPath.c_str());
+    std::wstring cmdLine;
+    if (attr != INVALID_FILE_ATTRIBUTES && (attr & FILE_ATTRIBUTE_DIRECTORY))
+        cmdLine = L"explorer.exe \"" + realPath + L"\"";
+    else
+        cmdLine = L"explorer.exe /select,\"" + realPath + L"\"";
+
+    STARTUPINFOW si = {}; si.cb = sizeof(si);
+    PROCESS_INFORMATION pi = {};
+    if (CreateProcessW(nullptr, &cmdLine[0], nullptr, nullptr, FALSE,
+        0, nullptr, nullptr, &si, &pi))
     {
-        SHOpenFolderAndSelectItems(pidl, 0, nullptr, 0);
-        CoTaskMemFree(pidl);
+        CloseHandle(pi.hProcess);
+        CloseHandle(pi.hThread);
     }
 }
 
@@ -190,7 +206,21 @@ void CopyImageToClipboard(HWND hwnd)
 // ファイル/フォルダ用コンテキストメニュー共通ヘルパー
 void ShowFileContextMenu(HWND hwnd, const std::wstring& path, POINT pt)
 {
+    // 書庫内ファイルではメニューを出さない
+    {
+        std::wstring arcP, entP;
+        if (SplitArchivePath(path, arcP, entP)) return;
+    }
+
     HMENU hMenu = CreatePopupMenu();
+
+    // 関連付けで開く（ファイルのみ、フォルダは非表示）
+    {
+        DWORD attr = GetFileAttributesW(path.c_str());
+        if (attr != INVALID_FILE_ATTRIBUTES && !(attr & FILE_ATTRIBUTE_DIRECTORY))
+            AppendMenuW(hMenu, MF_STRING, CTX_OPEN_ASSOC, I18nGet(L"ctx.openassoc").c_str());
+    }
+
     AppendMenuW(hMenu, MF_STRING, CTX_OPEN_EXPLORER, I18nGet(L"ctx.explorer").c_str());
     AppendMenuW(hMenu, MF_STRING, CTX_COPY_PATH, I18nGet(L"ctx.copypath").c_str());
     AppendMenuW(hMenu, MF_SEPARATOR, 0, nullptr);
@@ -209,7 +239,7 @@ void ShowFileContextMenu(HWND hwnd, const std::wstring& path, POINT pt)
     if (!cats.empty())
         AppendMenuW(hShelfMenu, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(hShelfMenu, MF_STRING, CTX_SHELF_NEW, L"新しい本棚を作成...");
-    // フォルダの場合:「フォルダを本棚として追加」（フォルダ名で本棚作成→配下の書庫も追加）
+    // フォルダの場合:「フォルダを本棚として追加」
     DWORD pathAttr = GetFileAttributesW(path.c_str());
     if (pathAttr != INVALID_FILE_ATTRIBUTES && (pathAttr & FILE_ATTRIBUTE_DIRECTORY))
     {
@@ -222,6 +252,53 @@ void ShowFileContextMenu(HWND hwnd, const std::wstring& path, POINT pt)
     if (BookshelfContains(path))
         AppendMenuW(hMenu, MF_STRING, CTX_REMOVE_SHELF, L"本棚から解除");
 
+    // 削除（通常モード・本棚モードのみ、特殊フォルダ・ドライブ・書庫内は非表示）
+    {
+        bool canDelete = true;
+        int treeMode = GetTreeMode();
+        if (treeMode == 2) canDelete = false; // 履歴モード
+
+        std::wstring arcPath, entryPath;
+        if (canDelete && SplitArchivePath(path, arcPath, entryPath)) canDelete = false;
+
+        if (canDelete && PathIsRootW(path.c_str())) canDelete = false;
+
+        if (canDelete)
+        {
+            static const KNOWNFOLDERID specialFolders[] = {
+                FOLDERID_Desktop, FOLDERID_Downloads, FOLDERID_Documents,
+                FOLDERID_Pictures, FOLDERID_Videos, FOLDERID_Music
+            };
+            for (auto& fid : specialFolders)
+            {
+                wchar_t* knownPath = nullptr;
+                if (SUCCEEDED(SHGetKnownFolderPath(fid, 0, nullptr, &knownPath)))
+                {
+                    bool match = (_wcsicmp(path.c_str(), knownPath) == 0);
+                    CoTaskMemFree(knownPath);
+                    if (match) { canDelete = false; break; }
+                }
+            }
+        }
+
+        if (canDelete)
+        {
+            AppendMenuW(hMenu, MF_SEPARATOR, 0, nullptr);
+            AppendMenuW(hMenu, MF_STRING, CTX_DELETE, I18nGet(L"ctx.delete").c_str());
+        }
+    }
+
+    // プロパティ（実ファイル/フォルダのみ）
+    {
+        std::wstring arcP, entP;
+        std::wstring realP = SplitArchivePath(path, arcP, entP) ? arcP : path;
+        if (GetFileAttributesW(realP.c_str()) != INVALID_FILE_ATTRIBUTES)
+        {
+            AppendMenuW(hMenu, MF_SEPARATOR, 0, nullptr);
+            AppendMenuW(hMenu, MF_STRING, CTX_PROPERTIES, I18nGet(L"ctx.properties").c_str());
+        }
+    }
+
     UINT cmd = TrackPopupMenu(hMenu, TPM_RETURNCMD | TPM_RIGHTBUTTON, pt.x, pt.y, 0, hwnd, nullptr);
     DestroyMenu(hMenu);
 
@@ -229,7 +306,64 @@ void ShowFileContextMenu(HWND hwnd, const std::wstring& path, POINT pt)
     auto slashPos = fileName.find_last_of(L'\\');
     if (slashPos != std::wstring::npos) fileName = fileName.substr(slashPos + 1);
 
-    if (cmd == CTX_OPEN_EXPLORER && !path.empty()) ShowInExplorer(path);
+    if (cmd == CTX_PROPERTIES && !path.empty())
+    {
+        std::wstring arcP, entP;
+        std::wstring propPath = SplitArchivePath(path, arcP, entP) ? arcP : path;
+        // wscript経由でプロパティダイアログ表示
+        // VBSの InvokeVerb("Properties") が最も確実
+        wchar_t tmpPath[MAX_PATH];
+        GetTempPathW(MAX_PATH, tmpPath);
+        std::wstring vbsPath = std::wstring(tmpPath) + L"karikari_prop.vbs";
+        // 親フォルダとファイル名に分割
+        std::wstring parent = propPath, name;
+        auto pos = propPath.find_last_of(L'\\');
+        if (pos != std::wstring::npos) { parent = propPath.substr(0, pos); name = propPath.substr(pos + 1); }
+        else { parent = L"."; name = propPath; }
+        // VBSスクリプト生成
+        std::wstring vbs = L"Set s=CreateObject(\"Shell.Application\")\r\n"
+            L"Set f=s.NameSpace(\"" + parent + L"\")\r\n"
+            L"If Not f Is Nothing Then\r\n"
+            L"  Set i=f.ParseName(\"" + name + L"\")\r\n"
+            L"  If Not i Is Nothing Then i.InvokeVerb \"properties\"\r\n"
+            L"End If\r\n"
+            L"WScript.Sleep 30000\r\n";
+        HANDLE hFile = CreateFileW(vbsPath.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, 0, nullptr);
+        if (hFile != INVALID_HANDLE_VALUE)
+        {
+            // BOM + UTF-16LE
+            BYTE bom[] = {0xFF, 0xFE};
+            DWORD written;
+            WriteFile(hFile, bom, 2, &written, nullptr);
+            WriteFile(hFile, vbs.c_str(), (DWORD)(vbs.size() * sizeof(wchar_t)), &written, nullptr);
+            CloseHandle(hFile);
+            std::wstring cmdLine = L"wscript.exe \"" + vbsPath + L"\"";
+            STARTUPINFOW si = {}; si.cb = sizeof(si);
+            PROCESS_INFORMATION pi = {};
+            if (CreateProcessW(nullptr, &cmdLine[0], nullptr, nullptr, FALSE,
+                CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi))
+            {
+                CloseHandle(pi.hProcess);
+                CloseHandle(pi.hThread);
+            }
+        }
+    }
+    else if (cmd == CTX_OPEN_ASSOC && !path.empty())
+    {
+        std::wstring arcP, entP;
+        std::wstring openPath = SplitArchivePath(path, arcP, entP) ? arcP : path;
+        // cmd /c start で関連付けアプリを起動
+        std::wstring cmdLine = L"cmd /c start \"\" \"" + openPath + L"\"";
+        STARTUPINFOW si = {}; si.cb = sizeof(si);
+        PROCESS_INFORMATION pi = {};
+        if (CreateProcessW(nullptr, &cmdLine[0], nullptr, nullptr, FALSE,
+            CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi))
+        {
+            CloseHandle(pi.hProcess);
+            CloseHandle(pi.hThread);
+        }
+    }
+    else if (cmd == CTX_OPEN_EXPLORER && !path.empty()) ShowInExplorer(path);
     else if (cmd == CTX_COPY_PATH && !path.empty()) CopyToClipboard(hwnd, path);
     else if (cmd == CTX_ADD_FAV) { FavoritesAdd(path); RefreshFavoritesInTree(); }
     else if (cmd == CTX_REMOVE_FAV) { FavoritesRemove(path); RefreshFavoritesInTree(); }
@@ -281,6 +415,39 @@ void ShowFileContextMenu(HWND hwnd, const std::wstring& path, POINT pt)
         int idx = cmd - CTX_SHELF_BASE;
         BookshelfAddItem(cats[idx].id, fileName, path);
         if (GetTreeMode() == 1) ShowBookshelfTree();
+    }
+    else if (cmd == CTX_DELETE)
+    {
+        std::wstring msg = L"\"" + fileName + L"\" " + I18nGet(L"dlg.delete");
+        if (MessageBoxW(hwnd, msg.c_str(), I18nGet(L"dlg.confirm").c_str(), MB_YESNO | MB_ICONQUESTION) == IDYES)
+        {
+            // 削除対象のファイルロックを解放
+            // 現在表示中の画像/アニメーション
+            if (_wcsicmp(path.c_str(), g_app.nav.currentPath.c_str()) == 0)
+            {
+                ViewerStopAnimation();
+                g_app.viewer.bitmap.Reset();
+                g_app.viewer.bitmap2.Reset();
+                MediaStop();
+            }
+            // 書庫キャッシュ（削除対象が書庫ファイルの場合）
+            if (IsArchiveFile(path))
+                CloseCurrentArchive();
+
+            // ごみ箱へ移動
+            std::wstring delPath = path;
+            delPath.push_back(L'\0'); // SHFileOperation用のダブルNULL
+            SHFILEOPSTRUCTW op = {};
+            op.hwnd = hwnd;
+            op.wFunc = FO_DELETE;
+            op.pFrom = delPath.c_str();
+            op.fFlags = FOF_ALLOWUNDO | FOF_NOCONFIRMATION;
+            if (SHFileOperationW(&op) == 0)
+            {
+                RemoveFileItemByPath(path);
+                RemoveTreeItemByPath(path);
+            }
+        }
     }
 }
 

@@ -9,7 +9,9 @@
 
 using Microsoft::WRL::ComPtr;
 
-static constexpr int kHoverPreviewSize = 320;
+static int g_previewSize = 320;
+
+void ApplyPreviewSize(int size) { g_previewSize = size; }
 
 int g_hoverItemIndex = -1;
 std::wstring g_hoverPath;
@@ -198,7 +200,7 @@ void ShowHoverPreview(const std::wstring& path, POINT screenPos)
         frame->GetSize(&imgW, &imgH);
         if (imgW == 0 || imgH == 0) { CoUninitialize(); delete params; CloseThreadpoolWork(work); return; }
 
-        float scale = std::min((float)kHoverPreviewSize / imgW, (float)kHoverPreviewSize / imgH);
+        float scale = std::min((float)g_previewSize / imgW, (float)g_previewSize / imgH);
         if (scale > 1.0f) scale = 1.0f;
         UINT dstW = std::max(1U, (UINT)(imgW * scale));
         UINT dstH = std::max(1U, (UINT)(imgH * scale));

@@ -767,6 +767,26 @@ static std::unordered_map<std::wstring, bool> g_catExpandState;
 // 通常ツリー展開状態の記憶（セッション中のみ）
 static std::unordered_set<std::wstring> g_normalExpandedPaths;
 
+// 本棚カテゴリの展開状態を保存
+static void SaveBookshelfExpandState()
+{
+    HWND hwnd = g_app.wnd.hwndTree;
+    if (!hwnd) return;
+    HTREEITEM hRoot = (HTREEITEM)SendMessageW(hwnd, TVM_GETNEXTITEM, TVGN_ROOT, 0);
+    if (!hRoot) return;
+    HTREEITEM hChild = (HTREEITEM)SendMessageW(hwnd, TVM_GETNEXTITEM, TVGN_CHILD, (LPARAM)hRoot);
+    while (hChild)
+    {
+        std::wstring tag = GetTreeItemPath(hChild);
+        if (tag.size() > 4 && tag.substr(0, 4) == L"CAT:")
+        {
+            UINT state = (UINT)SendMessageW(hwnd, TVM_GETITEMSTATE, (WPARAM)hChild, TVIS_EXPANDED);
+            g_catExpandState[tag.substr(4)] = (state & TVIS_EXPANDED) != 0;
+        }
+        hChild = (HTREEITEM)SendMessageW(hwnd, TVM_GETNEXTITEM, TVGN_NEXT, (LPARAM)hChild);
+    }
+}
+
 // 再帰的に展開ノードのパスを収集
 static void CollectExpandedPaths(HWND hwnd, HTREEITEM hItem, std::unordered_set<std::wstring>& out)
 {
@@ -808,23 +828,7 @@ void ShowBookshelfTree()
 
     // 現在の展開状態を保存（再構築前に）
     if (g_treeMode == 1)
-    {
-        HTREEITEM hRoot = (HTREEITEM)SendMessageW(hwnd, TVM_GETNEXTITEM, TVGN_ROOT, 0);
-        if (hRoot)
-        {
-            HTREEITEM hChild = (HTREEITEM)SendMessageW(hwnd, TVM_GETNEXTITEM, TVGN_CHILD, (LPARAM)hRoot);
-            while (hChild)
-            {
-                std::wstring tag = GetTreeItemPath(hChild);
-                if (tag.size() > 4 && tag.substr(0, 4) == L"CAT:")
-                {
-                    UINT state = (UINT)SendMessageW(hwnd, TVM_GETITEMSTATE, (WPARAM)hChild, TVIS_EXPANDED);
-                    g_catExpandState[tag.substr(4)] = (state & TVIS_EXPANDED) != 0;
-                }
-                hChild = (HTREEITEM)SendMessageW(hwnd, TVM_GETNEXTITEM, TVGN_NEXT, (LPARAM)hChild);
-            }
-        }
-    }
+        SaveBookshelfExpandState();
 
     g_treeMode = 1;
     SendMessageW(hwnd, WM_SETREDRAW, FALSE, 0);
@@ -835,7 +839,7 @@ void ShowBookshelfTree()
     int arcIcon = GetIconIndex(L"dummy.zip", false, true);
 
     // 本棚ルートノード
-    HTREEITEM hRoot = InsertTreeItemWithIcon(hwnd, TVI_ROOT, L"本棚", L"BOOKSHELF_ROOT", true, arcIcon);
+    HTREEITEM hRoot = InsertTreeItemWithIcon(hwnd, TVI_ROOT, I18nGet(L"ui.bookshelf").c_str(), L"BOOKSHELF_ROOT", true, arcIcon);
 
     // フォルダアイコン
     int folderIcon = g_genericFolderIcon >= 0 ? g_genericFolderIcon : GetIconIndex(L"C:\\", false);
@@ -896,6 +900,10 @@ void ShowHistoryTree()
 {
     HWND hwnd = g_app.wnd.hwndTree;
     if (!hwnd) return;
+
+    // 本棚モードから離れる前に展開状態を保存
+    if (g_treeMode == 1)
+        SaveBookshelfExpandState();
 
     g_treeMode = 2;
     SendMessageW(hwnd, WM_SETREDRAW, FALSE, 0);
@@ -977,6 +985,11 @@ void RefreshTree()
 void ShowNormalTree()
 {
     if (g_treeMode == 0) return; // 既に通常モード
+
+    // 本棚モードから離れる前に展開状態を保存
+    if (g_treeMode == 1)
+        SaveBookshelfExpandState();
+
     g_treeMode = 0;
     InitFolderTree();
 
@@ -1034,6 +1047,64 @@ static HTREEITEM FindChildByPath(HWND hwnd, HTREEITEM hParent, const std::wstrin
         hChild = (HTREEITEM)SendMessageW(hwnd, TVM_GETNEXTITEM, TVGN_NEXT, (LPARAM)hChild);
     }
     return nullptr;
+}
+
+// ツリー全体からパス一致するノードを探して削除
+static BOOL RemoveTreeNodeRecursive(HWND hwnd, HTREEITEM hParent, const std::wstring& targetPath)
+{
+    HTREEITEM hChild = (HTREEITEM)SendMessageW(hwnd, TVM_GETNEXTITEM, TVGN_CHILD, (LPARAM)hParent);
+    while (hChild)
+    {
+        std::wstring childPath = GetTreeItemPath(hChild);
+        // 本棚モードの ITEM: プレフィックスを除去して比較
+        std::wstring comparePath = childPath;
+        if (comparePath.size() > 5 && comparePath.substr(0, 5) == L"ITEM:")
+            comparePath = comparePath.substr(5);
+
+        // 末尾の \ を統一
+        std::wstring a = targetPath, b = comparePath;
+        if (!a.empty() && a.back() == L'\\') a.pop_back();
+        if (!b.empty() && b.back() == L'\\') b.pop_back();
+
+        if (_wcsicmp(a.c_str(), b.c_str()) == 0)
+        {
+            SendMessageW(hwnd, TVM_DELETEITEM, 0, (LPARAM)hChild);
+            return TRUE;
+        }
+
+        // 子ノードも再帰検索
+        if (RemoveTreeNodeRecursive(hwnd, hChild, targetPath))
+            return TRUE;
+
+        hChild = (HTREEITEM)SendMessageW(hwnd, TVM_GETNEXTITEM, TVGN_NEXT, (LPARAM)hChild);
+    }
+    return FALSE;
+}
+
+void RemoveTreeItemByPath(const std::wstring& path)
+{
+    HWND hwnd = g_app.wnd.hwndTree;
+    if (!hwnd || path.empty()) return;
+
+    HTREEITEM hRoot = (HTREEITEM)SendMessageW(hwnd, TVM_GETNEXTITEM, TVGN_ROOT, 0);
+    while (hRoot)
+    {
+        std::wstring rootPath = GetTreeItemPath(hRoot);
+        // ルート自身もチェック
+        std::wstring a = path, b = rootPath;
+        if (!a.empty() && a.back() == L'\\') a.pop_back();
+        if (!b.empty() && b.back() == L'\\') b.pop_back();
+        if (_wcsicmp(a.c_str(), b.c_str()) == 0)
+        {
+            SendMessageW(hwnd, TVM_DELETEITEM, 0, (LPARAM)hRoot);
+            return;
+        }
+
+        if (RemoveTreeNodeRecursive(hwnd, hRoot, path))
+            return;
+
+        hRoot = (HTREEITEM)SendMessageW(hwnd, TVM_GETNEXTITEM, TVGN_NEXT, (LPARAM)hRoot);
+    }
 }
 
 void SelectTreePath(const std::wstring& path)

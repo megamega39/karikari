@@ -7,6 +7,7 @@ void NavigateForward();
 void NavigateUp();
 void GoToFile(int index);
 void NavigateToSiblingArchive(int direction); // direction: -1=前, +1=次
+void LoadArchiveToList(const std::wstring& archivePath);
 void NavResetSettings(); // 設定変更時に呼ぶ
 void NavHistorySave();   // 戻る/進む履歴を永続化
 void NavHistoryLoad();   // 戻る/進む履歴を復元

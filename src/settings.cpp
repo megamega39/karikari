@@ -4,6 +4,9 @@
 #include "cache.h"
 #include "prefetch.h"
 #include "nav.h"
+#include "window.h"
+#include "filelist.h"
+#include "hover_preview.h"
 #include <shlwapi.h>
 #include <commctrl.h>
 
@@ -69,10 +72,12 @@ bool LoadSettings(AppSettings& s)
     JsonGetInt(json, L"viewMode", s.viewMode);
     JsonGetBool(json, L"isRTL", s.isRTL);
     JsonGetInt(json, L"scaleMode", s.scaleMode);
+    JsonGetIntArray(json, L"columnOrder", s.columnOrder);
+    JsonGetIntArray(json, L"columnWidths", s.columnWidths);
 
     // 設定値の範囲クランプ
     s.prefetchCount = std::max(1, std::min(s.prefetchCount, 50));
-    s.thumbnailSize = std::max(48, std::min(s.thumbnailSize, 512));
+    s.thumbnailSize = std::max(64, std::min(s.thumbnailSize, 384));
     s.previewSize = std::max(100, std::min(s.previewSize, 1024));
     s.fontSize = std::max(6, std::min(s.fontSize, 24));
     s.cacheSizeMB = std::max(50, std::min(s.cacheSizeMB, 2000));
@@ -117,7 +122,26 @@ bool SaveSettings(const AppSettings& s)
     json += L"  \"treeSortDescending\": " + std::wstring(s.treeSortDescending ? L"true" : L"false") + L",\n";
     json += L"  \"viewMode\": " + std::to_wstring(s.viewMode) + L",\n";
     json += L"  \"isRTL\": " + std::wstring(s.isRTL ? L"true" : L"false") + L",\n";
-    json += L"  \"scaleMode\": " + std::to_wstring(s.scaleMode) + L"\n";
+    json += L"  \"scaleMode\": " + std::to_wstring(s.scaleMode) + L",\n";
+
+    // 列順序
+    json += L"  \"columnOrder\": [";
+    for (size_t i = 0; i < s.columnOrder.size(); i++)
+    {
+        if (i > 0) json += L",";
+        json += std::to_wstring(s.columnOrder[i]);
+    }
+    json += L"],\n";
+
+    // 列幅
+    json += L"  \"columnWidths\": [";
+    for (size_t i = 0; i < s.columnWidths.size(); i++)
+    {
+        if (i > 0) json += L",";
+        json += std::to_wstring(s.columnWidths[i]);
+    }
+    json += L"]\n";
+
     json += L"}\n";
 
     bool result = WriteWStringToFile(GetSettingsPath(), json);
@@ -323,6 +347,7 @@ enum {
     IDC_KEY_ADD = 221,
     IDC_KEY_REMOVE = 222,
     IDC_KEY_RESET = 223,
+    IDC_DEFAULTS = 230,
 };
 
 static HFONT g_dlgFont = nullptr;
@@ -484,9 +509,27 @@ static INT_PTR CALLBACK SettingsDlgProc(HWND hDlg, UINT msg, WPARAM wParam, LPAR
 
         // 一般タブの値を設定
         HWND hLang = GetDlgItem(hDlg, IDC_LANG_COMBO);
-        SendMessageW(hLang, CB_ADDSTRING, 0, (LPARAM)L"日本語");
-        SendMessageW(hLang, CB_ADDSTRING, 0, (LPARAM)L"English");
-        SendMessageW(hLang, CB_SETCURSEL, s.language == L"en" ? 1 : 0, 0);
+        static const struct { const wchar_t* label; const wchar_t* code; } langs[] = {
+            { L"日本語",          L"ja" },
+            { L"English",        L"en" },
+            { L"简体中文",        L"zh-CN" },
+            { L"繁體中文",        L"zh-TW" },
+            { L"한국어",          L"ko" },
+            { L"Español",        L"es" },
+            { L"Português (BR)", L"pt-BR" },
+            { L"Français",       L"fr" },
+            { L"Deutsch",        L"de" },
+            { L"Русский",        L"ru" },
+            { L"Tiếng Việt",     L"vi" },
+            { L"ภาษาไทย",        L"th" },
+        };
+        int langSel = 0;
+        for (int i = 0; i < _countof(langs); i++)
+        {
+            SendMessageW(hLang, CB_ADDSTRING, 0, (LPARAM)langs[i].label);
+            if (s.language == langs[i].code) langSel = i;
+        }
+        SendMessageW(hLang, CB_SETCURSEL, langSel, 0);
 
         CheckDlgButton(hDlg, IDC_WRAP_NAV, s.wrapNavigation ? BST_CHECKED : BST_UNCHECKED);
         CheckDlgButton(hDlg, IDC_SPREAD_FIRST, s.spreadFirstSingle ? BST_CHECKED : BST_UNCHECKED);
@@ -564,13 +607,43 @@ static INT_PTR CALLBACK SettingsDlgProc(HWND hDlg, UINT msg, WPARAM wParam, LPAR
             InitDefaultKeyBindings();
             PopulateKeyList();
         }
+        else if (LOWORD(wParam) == IDC_DEFAULTS)
+        {
+            if (MessageBoxW(hDlg, L"すべての設定をデフォルトに戻しますか？", L"確認", MB_YESNO | MB_ICONQUESTION) == IDYES)
+            {
+                // デフォルト値でUIを再設定
+                AppSettings def; // コンストラクタでデフォルト値
+
+                SendMessageW(GetDlgItem(hDlg, IDC_LANG_COMBO), CB_SETCURSEL, 0, 0); // 日本語
+                CheckDlgButton(hDlg, IDC_WRAP_NAV, def.wrapNavigation ? BST_CHECKED : BST_UNCHECKED);
+                CheckDlgButton(hDlg, IDC_SPREAD_FIRST, def.spreadFirstSingle ? BST_CHECKED : BST_UNCHECKED);
+                CheckDlgButton(hDlg, IDC_RECURSIVE, def.recursiveLoad ? BST_CHECKED : BST_UNCHECKED);
+                CheckDlgButton(hDlg, IDC_AUTOPLAY, def.autoPlayMedia ? BST_CHECKED : BST_UNCHECKED);
+                SetDlgItemInt(hDlg, IDC_CACHE_EDIT, def.cacheSizeMB, FALSE);
+                wchar_t threshBuf[32];
+                swprintf_s(threshBuf, L"%.2f", def.spreadThreshold);
+                SetDlgItemTextW(hDlg, IDC_THRESH_EDIT, threshBuf);
+                SetDlgItemInt(hDlg, IDC_THUMB_EDIT, def.thumbnailSize, FALSE);
+                SetDlgItemInt(hDlg, IDC_PREVIEW_EDIT, def.previewSize, FALSE);
+                SetDlgItemInt(hDlg, IDC_FONT_EDIT, def.fontSize, FALSE);
+
+                // キーバインドもデフォルトに
+                InitDefaultKeyBindings();
+                PopulateKeyList();
+            }
+        }
         else if (LOWORD(wParam) == IDOK)
         {
             AppSettings s;
             LoadSettings(s);
+            std::wstring oldLang = s.language;
 
             int langIdx = (int)SendMessageW(GetDlgItem(hDlg, IDC_LANG_COMBO), CB_GETCURSEL, 0, 0);
-            s.language = (langIdx == 1) ? L"en" : L"ja";
+            static const wchar_t* langCodes[] = {
+                L"ja", L"en", L"zh-CN", L"zh-TW", L"ko", L"es",
+                L"pt-BR", L"fr", L"de", L"ru", L"vi", L"th"
+            };
+            s.language = (langIdx >= 0 && langIdx < _countof(langCodes)) ? langCodes[langIdx] : L"ja";
             s.wrapNavigation = (IsDlgButtonChecked(hDlg, IDC_WRAP_NAV) == BST_CHECKED);
             s.spreadFirstSingle = (IsDlgButtonChecked(hDlg, IDC_SPREAD_FIRST) == BST_CHECKED);
             s.recursiveLoad = (IsDlgButtonChecked(hDlg, IDC_RECURSIVE) == BST_CHECKED);
@@ -594,12 +667,24 @@ static INT_PTR CALLBACK SettingsDlgProc(HWND hDlg, UINT msg, WPARAM wParam, LPAR
 
             SaveSettings(s);
             SaveKeyBindings();
+
+            // 即時反映（再起動不要）
+            bool langChanged = (s.language != oldLang);
+            if (langChanged) I18nSetLang(s.language);
+            InvalidateSettingsCache();
+            ApplyFontSize(s.fontSize);
+            ApplyThumbnailSize(s.thumbnailSize);
+            ApplyPreviewSize(s.previewSize);
             CacheInit((size_t)s.cacheSizeMB * 1024 * 1024);
-            I18nSetLang(s.language);
             PrefetchResetSettings();
             NavResetSettings();
+            if (langChanged)
+                RebuildUI(); // 言語変更時のみツリー・リスト再構築
+            else
+                InvalidateRect(g_app.wnd.hwndMain, nullptr, TRUE); // 再描画のみ
 
             EndDialog(hDlg, IDOK);
+
             return TRUE;
         }
         else if (LOWORD(wParam) == IDCANCEL)
@@ -623,7 +708,7 @@ void ShowSettingsDialog(HWND hwndParent)
         if (fn) dpi = fn(hwndParent);
     }
     auto S = [dpi](int v) -> int { return MulDiv(v, dpi, 96); };
-    int DW = S(360), DH = S(460);
+    int DW = S(630), DH = S(780);
 
     // 親ウィンドウ中央に配置
     RECT parentRc;
@@ -635,10 +720,11 @@ void ShowSettingsDialog(HWND hwndParent)
     struct { DLGTEMPLATE dt; WORD menu, cls, title; wchar_t titleText[8]; } tmpl = {};
     tmpl.dt.style = DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU;
     tmpl.dt.cx = 1; tmpl.dt.cy = 1;
-    wcscpy_s(tmpl.titleText, L"設定");
+    wcscpy_s(tmpl.titleText, I18nGet(L"ui.settings").c_str());
 
     HWND hDlg = CreateDialogIndirectW(g_app.hInstance, &tmpl.dt, hwndParent, SettingsDlgProc);
     if (!hDlg) return;
+    SetWindowTextW(hDlg, I18nGet(L"ui.settings").c_str());
 
     // ピクセルサイズに補正（非クライアント領域を加算）
     RECT rc = { 0, 0, DW, DH };
@@ -677,7 +763,7 @@ void ShowSettingsDialog(HWND hwndParent)
 
     // === 一般タブ ===
     GL(MkLabel(hDlg, tx, ty + 2, S(120), lh, L"Language"));
-    GL(MkCombo(hDlg, editX, ty, editW, S(120), IDC_LANG_COMBO));
+    GL(MkCombo(hDlg, editX, ty, editW, S(300), IDC_LANG_COMBO));
     ty += S(30);
 
     GL(MkLabel(hDlg, tx, ty, S(200), lh, L"ナビゲーション", true));
@@ -708,10 +794,10 @@ void ShowSettingsDialog(HWND hwndParent)
     GL(MkLabel(hDlg, tx + pad, ty + 2, S(200), lh, L"見開き判定の閾値"));
     GL(MkEdit(hDlg, editX, ty, editW, eh, IDC_THRESH_EDIT, 0));
     ty += S(26);
-    GL(MkLabel(hDlg, tx + pad, ty + 2, S(200), lh, L"サムネイルサイズ (px)"));
-    { HWND h = MkEdit(hDlg, editX, ty, editW, eh, IDC_THUMB_EDIT); GL(h); GL(MkUpDown(hDlg, h, 0, 32, 512, 192)); }
+    GL(MkLabel(hDlg, tx + pad, ty + 2, S(200), lh, L"グリッドサムネイルサイズ (px)"));
+    { HWND h = MkEdit(hDlg, editX, ty, editW, eh, IDC_THUMB_EDIT); GL(h); GL(MkUpDown(hDlg, h, 0, 64, 384, 192)); }
     ty += S(26);
-    GL(MkLabel(hDlg, tx + pad, ty + 2, S(200), lh, L"プレビューサイズ (px)"));
+    GL(MkLabel(hDlg, tx + pad, ty + 2, S(200), lh, L"ホバープレビューサイズ (px)"));
     { HWND h = MkEdit(hDlg, editX, ty, editW, eh, IDC_PREVIEW_EDIT); GL(h); GL(MkUpDown(hDlg, h, 0, 64, 1024, 320)); }
     ty += S(26);
     GL(MkLabel(hDlg, tx + pad, ty + 2, S(200), lh, L"フォントサイズ"));
@@ -740,7 +826,8 @@ void ShowSettingsDialog(HWND hwndParent)
     SL(MkButton(hDlg, tx + S(96), btnY, S(90), S(26), IDC_KEY_REMOVE, L"キー削除"));
     SL(MkButton(hDlg, tx + S(192), btnY, S(120), S(26), IDC_KEY_RESET, L"デフォルトに戻す"));
 
-    // === OK/キャンセル ===
+    // === デフォルト/OK/キャンセル ===
+    MkButton(hDlg, S(10), DH - S(34), S(120), S(26), IDC_DEFAULTS, L"デフォルトに戻す");
     MkButton(hDlg, DW - S(170), DH - S(34), S(75), S(26), IDOK, L"OK");
     MkButton(hDlg, DW - S(88), DH - S(34), S(75), S(26), IDCANCEL, L"キャンセル");
 

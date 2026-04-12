@@ -249,3 +249,26 @@
   - バッチ展開+デコードを1つのスレッドプールワーカーにまとめてバックグラウンド実行
   - BatchPrefetchCtx 構造体でパスをUIスレッドでコピーし、ワーカーに渡す（viewableFiles への非同期アクセス回避）
   - 世代番号チェックで古いワーカーを早期中断
+
+## 2026-04-13: AnimState構造体への移行（viewer.cpp）
+- **AnimState対応の完全移行**: ViewerStateの旧フィールド（animType, webpDecoder, gifDecoder等）をAnimState構造体（anim1, anim2）に統一
+  - WebPDecodeNextFrame() を新規関数として抽出（WM_TIMERから分離）
+  - TryLoadWebPAnimation(), TryLoadGifAnimation(), TryLoadAnimation() を AnimState引数対応に変更
+  - ViewerStopAnimation() を AnimStateReset() ベースに簡素化
+  - WM_TIMERハンドラをデュアルアニメ対応に全面書き換え（elapsed/nextDelayベースのタイミング制御）
+  - ViewerLoadImage(), ViewerLoadImageAsync() で anim1 + lastAnimTick を使用
+  - ViewerShowSpread() でデュアルアニメ対応（anim1=bitmap, anim2=bitmap2）
+  - ViewerLoadSpreadAsync() でアニメ拡張子検出時に同期フォールバック
+- 設計判断: 見開きアニメ（GIF+GIF等）を将来的にサポートするためのデュアルAnimState設計
+
+## 2026-04-13: 設定変更の即時反映（再起動不要化）
+- **変更内容**: 言語・フォントサイズ・サムネイルサイズ・プレビューサイズの変更を自動再起動なしで即時反映
+- **変更ファイル**: window.h/cpp, filelist.h/cpp, hover_preview.h/cpp, settings.cpp
+- **実装詳細**:
+  - `ApplyFontSize()`: グローバルフォント(g_uiFont/g_uiFontBold)を作成し、全UIコントロールにWM_SETFONT送信。アイコンフォント(Segoe Fluent Icons)は対象外
+  - `RebuildUI()`: ツリー再構築（モード別）+ ファイルリスト再描画 + レイアウト更新 + 全体再描画
+  - `ApplyThumbnailSize()`: g_thumbSize更新、グリッドモード時はSwitchToGridView()で再構築
+  - `ApplyPreviewSize()`: g_previewSize更新（次回ホバー時に反映）
+  - WM_CREATE内のフォント統一処理をApplyFontSize()呼び出しに置換
+  - settings.cpp のOKハンドラからCreateProcessW/ExitProcess（自動再起動）を完全削除
+- **設計判断**: 再起動は不要な変更にまでCreateProcess/ExitProcessを使っていたのを解消。フォントはグローバル変数で管理し、初回起動時と設定変更時の両方で使用

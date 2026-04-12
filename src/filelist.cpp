@@ -4,6 +4,8 @@
 #include "utils.h"
 #include "i18n.h"
 #include "viewer.h"
+#include "settings.h"
+#include <commctrl.h>
 #include <shlwapi.h>
 #include <shlobj.h>
 #include <uxtheme.h>
@@ -112,6 +114,54 @@ void LoadFolder(const std::wstring& folderPath)
             g_app.nav.viewableFileIndex[key] = idx;
         }
     }
+}
+
+void RemoveFileItemByPath(const std::wstring& path)
+{
+    // g_allFileItems から削除
+    for (auto it = g_allFileItems.begin(); it != g_allFileItems.end(); ++it)
+    {
+        if (_wcsicmp(it->fullPath.c_str(), path.c_str()) == 0)
+        {
+            g_allFileItems.erase(it);
+            break;
+        }
+    }
+
+    // g_app.nav.fileItems から削除
+    for (auto it = g_app.nav.fileItems.begin(); it != g_app.nav.fileItems.end(); ++it)
+    {
+        if (_wcsicmp(it->fullPath.c_str(), path.c_str()) == 0)
+        {
+            g_app.nav.fileItems.erase(it);
+            break;
+        }
+    }
+
+    // 逆引きマップ再構築
+    g_app.nav.fileItemIndex.clear();
+    for (int i = 0; i < (int)g_app.nav.fileItems.size(); i++)
+    {
+        std::wstring key = ToLowerW(g_app.nav.fileItems[i].fullPath);
+        g_app.nav.fileItemIndex[key] = i;
+    }
+
+    // viewableFiles 再構築
+    g_app.nav.viewableFiles.clear();
+    g_app.nav.viewableFileIndex.clear();
+    for (auto& item : g_app.nav.fileItems)
+    {
+        if (!item.isDirectory && (IsImageFile(item.fullPath) || IsMediaFile(item.fullPath)))
+        {
+            int idx = (int)g_app.nav.viewableFiles.size();
+            g_app.nav.viewableFiles.push_back(item.fullPath);
+            std::wstring key = ToLowerW(item.fullPath);
+            g_app.nav.viewableFileIndex[key] = idx;
+        }
+    }
+
+    // ListView を更新（PopulateListView がグリッド/リスト両対応）
+    PopulateListView();
 }
 
 std::wstring FormatFileSize(ULONGLONG size)
@@ -370,7 +420,7 @@ void SetFileListFilter(const std::wstring& filter)
 }
 
 // === サムネイルグリッド表示 ===
-static constexpr int kThumbSize = 128;
+static int g_thumbSize = 192;
 static HIMAGELIST g_thumbImageList = nullptr;
 static std::unordered_map<int, int> g_thumbIndexMap;
 // g_isGridMode は210行で定義済み
@@ -527,7 +577,7 @@ static void ThumbWorkerFunc(PTP_CALLBACK_INSTANCE, PVOID ctx, PTP_WORK)
         // 書庫内画像
         std::vector<BYTE> buffer;
         if (ExtractToMemory(arcPath, entryPath, buffer) && !buffer.empty())
-            hbmp = CreateThumbnailBitmap(wi->path, kThumbSize, kThumbSize, factory.Get(),
+            hbmp = CreateThumbnailBitmap(wi->path, g_thumbSize, g_thumbSize, factory.Get(),
                                          buffer.data(), buffer.size());
     }
     else if (IsArchiveFile(wi->path))
@@ -542,7 +592,7 @@ static void ThumbWorkerFunc(PTP_CALLBACK_INSTANCE, PVOID ctx, PTP_WORK)
                 {
                     std::vector<BYTE> buffer;
                     if (ExtractToMemory(wi->path, e.path, buffer) && !buffer.empty())
-                        hbmp = CreateThumbnailBitmap(wi->path, kThumbSize, kThumbSize,
+                        hbmp = CreateThumbnailBitmap(wi->path, g_thumbSize, g_thumbSize,
                                                      factory.Get(), buffer.data(), buffer.size());
                     break;
                 }
@@ -555,7 +605,7 @@ static void ThumbWorkerFunc(PTP_CALLBACK_INSTANCE, PVOID ctx, PTP_WORK)
         if (IsImageFile(wi->path))
         {
             // 通常の画像ファイル
-            hbmp = CreateThumbnailBitmap(wi->path, kThumbSize, kThumbSize, factory.Get());
+            hbmp = CreateThumbnailBitmap(wi->path, g_thumbSize, g_thumbSize, factory.Get());
         }
         else
         {
@@ -566,7 +616,7 @@ static void ThumbWorkerFunc(PTP_CALLBACK_INSTANCE, PVOID ctx, PTP_WORK)
                 IShellItemImageFactory* imgFactory = nullptr;
                 if (SUCCEEDED(shellItem->QueryInterface(IID_PPV_ARGS(&imgFactory))))
                 {
-                    SIZE sz = { kThumbSize, kThumbSize };
+                    SIZE sz = { g_thumbSize, g_thumbSize };
                     imgFactory->GetImage(sz, SIIGBF_THUMBNAILONLY, &hbmp);
                     if (!hbmp) // THUMBNAILONLY失敗 → アイコンも許可
                         imgFactory->GetImage(sz, SIIGBF_ICONONLY, &hbmp);
@@ -587,7 +637,7 @@ static void ThumbWorkerFunc(PTP_CALLBACK_INSTANCE, PVOID ctx, PTP_WORK)
                         if (!(fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) && IsImageFile(fd.cFileName))
                         {
                             std::wstring imgPath = wi->path + L"\\" + fd.cFileName;
-                            hbmp = CreateThumbnailBitmap(imgPath, kThumbSize, kThumbSize, factory.Get());
+                            hbmp = CreateThumbnailBitmap(imgPath, g_thumbSize, g_thumbSize, factory.Get());
                             break;
                         }
                     } while (FindNextFileW(hFind, &fd));
@@ -710,23 +760,23 @@ void SwitchToGridView()
     // サムネイルImageList作成
     if (g_thumbImageList) { ImageList_Destroy(g_thumbImageList); g_thumbImageList = nullptr; }
     g_thumbIndexMap.clear();
-    g_thumbImageList = ImageList_Create(kThumbSize, kThumbSize, ILC_COLOR32, 64, 32);
+    g_thumbImageList = ImageList_Create(g_thumbSize, g_thumbSize, ILC_COLOR32, 64, 32);
 
     // デフォルトアイコン (index 0: 灰色プレースホルダー)
     {
         BITMAPINFO bmi = {};
         bmi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
-        bmi.bmiHeader.biWidth = kThumbSize; bmi.bmiHeader.biHeight = -kThumbSize;
+        bmi.bmiHeader.biWidth = g_thumbSize; bmi.bmiHeader.biHeight = -g_thumbSize;
         bmi.bmiHeader.biPlanes = 1; bmi.bmiHeader.biBitCount = 32;
         void* pBits = nullptr;
         HBITMAP hbmp = CreateDIBSection(nullptr, &bmi, DIB_RGB_COLORS, &pBits, nullptr, 0);
-        if (hbmp) { memset(pBits, 0xE0, kThumbSize * kThumbSize * 4); ImageList_Add(g_thumbImageList, hbmp, nullptr); DeleteObject(hbmp); }
+        if (hbmp) { memset(pBits, 0xE0, g_thumbSize * g_thumbSize * 4); ImageList_Add(g_thumbImageList, hbmp, nullptr); DeleteObject(hbmp); }
     }
 
     SendMessageW(hwnd, LVM_SETIMAGELIST, LVSIL_NORMAL, (LPARAM)g_thumbImageList);
 
     // アイコン間隔を設定（サムネイルサイズ + テキスト余白）
-    int spacing = kThumbSize + 20;
+    int spacing = g_thumbSize + 20;
     SendMessageW(hwnd, LVM_SETICONSPACING, 0, MAKELPARAM(spacing, spacing + 24));
 
     // 全アイテムをデフォルトアイコンで即座に挿入
@@ -774,7 +824,7 @@ void SwitchToListView()
     // ListView を LVS_REPORT | LVS_OWNERDATA モードで再作成
     HWND hwnd = RecreateListView(g_app.wnd.hwndMain, LVS_REPORT | LVS_OWNERDATA);
     SendMessageW(hwnd, LVM_SETEXTENDEDLISTVIEWSTYLE, 0,
-                 LVS_EX_FULLROWSELECT | LVS_EX_DOUBLEBUFFER);
+                 LVS_EX_FULLROWSELECT | LVS_EX_DOUBLEBUFFER | LVS_EX_HEADERDRAGDROP);
     SendMessageW(hwnd, LVM_SETBKCOLOR, 0, (LPARAM)RGB(235, 244, 255));
     SendMessageW(hwnd, LVM_SETTEXTBKCOLOR, 0, (LPARAM)RGB(235, 244, 255));
 
@@ -796,7 +846,26 @@ void SwitchToListView()
     lvc.cx = 130; lvc.pszText = (LPWSTR)L"更新日時";
     SendMessageW(hwnd, LVM_INSERTCOLUMNW, 3, (LPARAM)&lvc);
 
+    // 保存された列順序・幅を復元
+    {
+        AppSettings colSettings;
+        if (LoadSettings(colSettings))
+        {
+            if (colSettings.columnOrder.size() == 4)
+                ListView_SetColumnOrderArray(hwnd, 4, colSettings.columnOrder.data());
+            if (colSettings.columnWidths.size() == 4)
+                for (int i = 0; i < 4; i++)
+                    ListView_SetColumnWidth(hwnd, i, colSettings.columnWidths[i]);
+        }
+    }
+
     PopulateListView();
+}
+
+void ApplyThumbnailSize(int size)
+{
+    g_thumbSize = size;
+    if (g_isGridMode) SwitchToGridView(); // グリッド再構築
 }
 
 int GetThumbnailIndex(int fileItemIndex)

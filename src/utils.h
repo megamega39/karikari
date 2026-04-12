@@ -181,6 +181,27 @@ inline bool JsonGetFloat(const std::wstring& json, const wchar_t* key, float& ou
     return true;
 }
 
+inline bool JsonGetIntArray(const std::wstring& json, const wchar_t* key, std::vector<int>& out)
+{
+    std::wstring search = L"\""; search += key; search += L"\"";
+    auto pos = json.find(search);
+    if (pos == std::wstring::npos) return false;
+    pos = json.find(L'[', pos);
+    if (pos == std::wstring::npos) return false;
+    auto end = json.find(L']', pos);
+    if (end == std::wstring::npos) return false;
+    out.clear();
+    pos++;
+    while (pos < end)
+    {
+        while (pos < end && (json[pos] == L' ' || json[pos] == L',' || json[pos] == L'\t')) pos++;
+        if (pos >= end) break;
+        out.push_back(_wtoi(&json[pos]));
+        while (pos < end && json[pos] != L',') pos++;
+    }
+    return !out.empty();
+}
+
 // === 定数 ===
 constexpr float kZoomMin = 0.25f;  // 25%
 constexpr float kZoomMax = 16.0f;  // 1600%

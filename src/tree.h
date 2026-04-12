@@ -12,6 +12,7 @@ void ShowHistoryTree();    // 履歴のみ表示
 void ShowNormalTree();     // 通常のフォルダツリーに戻す
 void SaveNormalTreeState(); // 通常ツリーの展開状態を保存（モード切替前に呼ぶ）
 void RefreshTree();         // ツリーを再構築（展開状態+スクロール位置を保���）
+void RemoveTreeItemByPath(const std::wstring& path); // パス一致するツリーノードを削除
 int GetTreeMode();         // 0=通常, 1=本棚, 2=履歴
 bool IsFavoritesChild(HTREEITEM hItem); // お気に入り直下の子ノードか判定
 

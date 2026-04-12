@@ -1,5 +1,6 @@
 #include "addressbar.h"
 #include "nav.h"
+#include "i18n.h"
 
 static HFONT g_addrFont = nullptr;
 static HFONT g_addrFontBold = nullptr;
@@ -254,7 +255,7 @@ void CreateAddressBar(HWND parent, HINSTANCE hInst)
 
     // ラベル
     g_app.wnd.hwndAddressLabel = CreateWindowExW(
-        0, L"STATIC", L" アドレス(A)",
+        0, L"STATIC", I18nGet(L"ui.address").c_str(),
         WS_CHILD | WS_VISIBLE | SS_CENTERIMAGE,
         0, 0, 80, 28,
         parent, (HMENU)(UINT_PTR)IDC_ADDRESSBAR_LABEL, hInst, nullptr);

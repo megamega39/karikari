@@ -27,6 +27,8 @@ struct AppSettings {
     int viewMode = 0;                     // 0=自動, 1=単独, 2=見開き
     bool isRTL = false;                   // 綴じ方向（右綴じ）
     int scaleMode = 0;                    // 0=FitWindow, 1=FitWidth, 2=FitHeight, 3=Original
+    std::vector<int> columnOrder;         // ファイルリスト列順序（空=デフォルト）
+    std::vector<int> columnWidths;        // ファイルリスト列幅（空=デフォルト）
 };
 
 // 単一キーコンビネーション

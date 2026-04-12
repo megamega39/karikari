@@ -17,3 +17,4 @@ void ShowHoverPreview(const std::wstring& path, POINT screenPos);
 void HideHoverPreview();
 void HandleHoverPreviewDone(HWND hwnd, WPARAM wParam, LPARAM lParam);
 void CleanupHoverPreview();
+void ApplyPreviewSize(int size);

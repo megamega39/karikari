@@ -193,7 +193,7 @@ void ShowHelpDialog(HWND hwndParent)
     }
     auto S = [dpi](int v) -> int { return MulDiv(v, dpi, 96); };
 
-    int DW = S(520), DH = S(440);
+    int DW = S(780), DH = S(660);
 
     // 親ウィンドウ中央に配置
     RECT parentRc;

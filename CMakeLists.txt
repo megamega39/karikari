@@ -28,6 +28,7 @@ add_executable(karikari WIN32
     src/i18n.cpp
     src/fswatcher.cpp
     src/command.cpp
+    src/help.cpp
     src/hover_preview.cpp
     src/context_menu.cpp
     src/viewer_toolbar.cpp
