@@ -379,6 +379,11 @@ static bool IsValidEntryPath(const std::wstring& path)
     if (path.find(L"..\\") != std::wstring::npos) return false;
     if (path.find(L"../") != std::wstring::npos) return false;
     if (path == L"..") return false;
+    // 末尾が /.. or \.. で終わるケース
+    if (path.size() >= 3) {
+        auto tail = path.substr(path.size() - 3);
+        if (tail == L"\\.." || tail == L"/..") return false;
+    }
     if (path.size() >= 2 && path[1] == L':') return false; // 絶対パス
     if (!path.empty() && (path[0] == L'\\' || path[0] == L'/')) return false;
     return true;
@@ -722,13 +727,16 @@ bool ExtractSmart(const std::wstring& archivePath,
         }
     }
 
-    wchar_t tmpFile[MAX_PATH];
-    GetTempFileNameW(GetTempDir().c_str(), L"kk", 0, tmpFile);
-    std::wstring finalPath = std::wstring(tmpFile) + ext;
-    DeleteFileW(finalPath.c_str());
-    MoveFileW(tmpFile, finalPath.c_str());
-
-    HANDLE hFile = CreateFileW(finalPath.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, 0, nullptr);
+    // 拡張子付き一意名を直接生成（TOCTOU回避: GetTempFileName + MoveFile の代わり）
+    std::wstring finalPath;
+    HANDLE hFile = INVALID_HANDLE_VALUE;
+    for (int attempt = 0; attempt < 100; attempt++) {
+        wchar_t name[MAX_PATH];
+        swprintf_s(name, L"%skk%08x%s", GetTempDir().c_str(), GetTickCount() + attempt, ext.c_str());
+        finalPath = name;
+        hFile = CreateFileW(finalPath.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_NEW, 0, nullptr);
+        if (hFile != INVALID_HANDLE_VALUE) break;
+    }
     if (hFile == INVALID_HANDLE_VALUE)
     {
         // テンプ作成失敗 → メモリ展開にフォールバック

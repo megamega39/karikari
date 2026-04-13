@@ -305,3 +305,23 @@
 - help.cpp: ダイアログタイトル、タブ名、Editコントロールテキスト、Aboutタブ全テキスト、閉じるボタンをI18nGet()に置換
 - help.cpp: i18n.hインクルード追加
 - **設計判断**: g_helpTexts は static const wchar_t* 配列だったため、I18nGet()の戻り値（std::wstring参照）のライフタイム問題を回避するため、CreateWindowExWでは空文字列で作成し、SetWindowTextW()で後からI18nGet()の結果を設定
+
+## 2026-04-13: コードレビュー指摘修正（セキュリティ・スレッド安全性・品質改善）
+- **CRITICAL**: media.cpp MFCallback::Invoke でg_mfSessionをローカルコピーしてからnullチェック（MFワーカースレッドとUIスレッドの競合防止）
+- **CRITICAL**: prefetch.cpp PrefetchSizesForSpread でviewableFilesをコンテキストにコピーして渡す（ダングリング参照防止）
+- **HIGH**: context_menu.cpp CTX_OPEN_ASSOC を cmd /c start から ShellExecuteExW に変更（コマンドインジェクション防止）
+- **HIGH**: context_menu.cpp VBSスクリプトのパスにダブルクォートエスケープ追加（インジェクション防止）
+- **HIGH**: context_menu.cpp ShowInExplorer を PIDL方式（SHOpenFolderAndSelectItems）に変更（パスインジェクション防止）
+- **HIGH**: media.cpp/nav.cpp 書庫内メディア一時ファイルをMediaStop時に自動削除（g_tempMediaFile管理）
+- **HIGH**: viewer.cpp ReadFileToBytes にGetFileSizeExの戻り値チェックと512MBサイズ制限追加
+- **MEDIUM**: nav.cpp ApplyArchiveLoadResult と filelist.cpp LoadFolder にClearSpreadCache()追加（書庫/フォルダ切替時の見開きキャッシュクリア）
+- **MEDIUM**: settings.cpp g_settingsLoaded を std::atomic<bool> に変更（スレッド安全性）
+- **MEDIUM**: viewer.cpp GetTickCount→GetTickCount64、app.h lastAnimTick を DWORD→ULONGLONG（49日オーバーフロー防止）
+- **MEDIUM**: window.cpp UpdateSortButtonLabels の未使用変数 names[], keys[] を削除
+- **MEDIUM**: nav.cpp ハードコード日本語「書庫を開けません...」「読み込み中...」をI18nGet()に置換。status.loadingキーを全12言語に追加
+- **MEDIUM**: archive.cpp ExtractSmart のTOCTOU脆弱性修正（GetTempFileName+MoveFile→CreateFileW(CREATE_NEW)ループ）
+- **LOW**: archive.cpp IsValidEntryPath に末尾 /.. \.. チェック追加
+- **LOW**: navbar.cpp GetFileSize→GetFileSizeExに変更（サイズチェック追加）
+- **LOW**: navbar.cpp IStream生ポインタ→ComPtrに変更（RAII化）
+- **LOW**: window.cpp/help.cpp の(LPWSTR)キャストに安全性コメント追加
+- **設計判断**: ShellExecuteExWはSEE_MASK_ASYNCOKフラグで非同期実行。SHOpenFolderAndSelectItemsはPIDL方式でファイルパスのメタ文字問題を回避。g_tempMediaFileはstaticではなく外部リンケージにしてnav.cppからextern参照

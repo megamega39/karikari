@@ -70,6 +70,12 @@ static INT_PTR CALLBACK HelpDlgProc(HWND hDlg, UINT msg, WPARAM wParam, LPARAM l
         }
         break;
     }
+    case WM_CTLCOLORSTATIC:
+    {
+        HDC hdc = (HDC)wParam;
+        SetBkMode(hdc, TRANSPARENT);
+        return (INT_PTR)GetSysColorBrush(COLOR_BTNFACE);
+    }
     case WM_COMMAND:
         if (LOWORD(wParam) == IDC_HELP_CLOSE || LOWORD(wParam) == IDCANCEL)
         {
@@ -131,6 +137,7 @@ void ShowHelpDialog(HWND hwndParent)
 
     TCITEMW tci = {};
     tci.mask = TCIF_TEXT;
+    // NOTE: (LPWSTR) cast は安全 — TCM_INSERTITEMW は pszText を読み取りのみで使用する
     for (int i = 0; i < TAB_COUNT; i++)
     {
         tci.pszText = (LPWSTR)I18nGet(g_tabKeys[i]).c_str();

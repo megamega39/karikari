@@ -535,10 +535,13 @@ void ExpandTreeNode(HTREEITEM hItem)
         std::wstring realPath = nodePath.substr(5);
         DWORD a = GetFileAttributesW(realPath.c_str());
         if (a == INVALID_FILE_ATTRIBUTES || !(a & FILE_ATTRIBUTE_DIRECTORY)) return;
-        wchar_t* newStr = _wcsdup(realPath.c_str());
+        // lParamを実パスに書き換え（AllocPathStrで確保、TVN_DELETEITEMのdelete[]に対応）
+        wchar_t* newStr = AllocPathStr(realPath);
         TVITEMW tvi = {};
         tvi.mask = TVIF_PARAM;
         tvi.hItem = hItem;
+        SendMessageW(hwnd, TVM_GETITEMW, 0, (LPARAM)&tvi);
+        delete[] (wchar_t*)tvi.lParam; // 旧ITEM:パスを解放
         tvi.lParam = (LPARAM)newStr;
         SendMessageW(hwnd, TVM_SETITEMW, 0, (LPARAM)&tvi);
         nodePath = realPath;
@@ -1149,14 +1152,15 @@ void SelectTreePath(const std::wstring& path)
                         goto bookshelf_found;
                     }
 
-                    // ITEM:タグのパス���、開いたパスの親ディレクトリか
-                    if (tag.size() > 5 && tag.substr(0, 5) == L"ITEM:")
+                    // ITEM:タグまたは実パス（展開後に書き換え済み）が開いたパスの親か
                     {
-                        std::wstring itemPath = tag.substr(5);
+                        std::wstring itemPath = tag;
+                        if (itemPath.size() > 5 && itemPath.substr(0, 5) == L"ITEM:")
+                            itemPath = itemPath.substr(5);
                         if (!itemPath.empty() && itemPath.back() == L'\\') itemPath.pop_back();
                         std::wstring prefix = itemPath + L"\\";
                         if (_wcsnicmp(tp.c_str(), prefix.c_str(), prefix.size()) == 0)
-                            hBestMatch = hItem; // 最も深いマッチを保持（後から上書きOK）
+                            hBestMatch = hItem;
                     }
 
                     hItem = (HTREEITEM)SendMessageW(hwnd, TVM_GETNEXTITEM, TVGN_NEXT, (LPARAM)hItem);
@@ -1181,6 +1185,9 @@ bookshelf_found:
                 if (!np.empty() && np.back() == L'\\') np.pop_back();
                 if (_wcsicmp(np.c_str(), tp.c_str()) == 0) break;
 
+                // 直接ExpandTreeNodeを呼んで子ノードを確実に追加
+                // （WM_SETREDRAW=FALSE中はTVN_ITEMEXPANDINGが抑制される場合がある）
+                ExpandTreeNode(hBestMatch);
                 SendMessageW(hwnd, TVM_EXPAND, TVE_EXPAND, (LPARAM)hBestMatch);
                 HTREEITEM hChild = FindChildByPath(hwnd, hBestMatch, path);
                 if (!hChild) break;
@@ -1266,6 +1273,7 @@ bookshelf_found:
             break; // 完全一致、終了
 
         // 展開してから子を探す
+        ExpandTreeNode(hBest);
         SendMessageW(hwnd, TVM_EXPAND, TVE_EXPAND, (LPARAM)hBest);
 
         HTREEITEM hChild = FindChildByPath(hwnd, hBest, path);

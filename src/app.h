@@ -163,7 +163,7 @@ struct ViewerState {
     AnimState anim1, anim2;  // ページ1/2のアニメ状態
     UINT_PTR animTimer = 0;
     bool isAnimating = false;
-    DWORD lastAnimTick = 0;
+    ULONGLONG lastAnimTick = 0;
 
     // レガシーアニメーション（互換用）
     std::vector<ComPtr<ID2D1Bitmap>> animFrames;

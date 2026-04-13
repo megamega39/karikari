@@ -9,6 +9,8 @@
 #include "hover_preview.h"
 #include <shlwapi.h>
 #include <commctrl.h>
+#include <uxtheme.h>
+#pragma comment(lib, "uxtheme.lib")
 
 std::wstring GetSettingsPath()
 {
@@ -23,7 +25,7 @@ std::wstring GetSettingsPath()
 
 // === 設定キャッシュ ===
 static AppSettings g_cachedSettings;
-static bool g_settingsLoaded = false;
+static std::atomic<bool> g_settingsLoaded{false};
 
 const AppSettings& GetCachedSettings()
 {
@@ -597,6 +599,12 @@ static INT_PTR CALLBACK SettingsDlgProc(HWND hDlg, UINT msg, WPARAM wParam, LPAR
 
         return TRUE;
     }
+    case WM_CTLCOLORSTATIC:
+    {
+        HDC hdc = (HDC)wParam;
+        SetBkMode(hdc, TRANSPARENT);
+        return (INT_PTR)GetSysColorBrush(COLOR_BTNFACE);
+    }
     case WM_NOTIFY:
     {
         LPNMHDR pnm = (LPNMHDR)lParam;
@@ -770,6 +778,7 @@ void ShowSettingsDialog(HWND hwndParent)
     HWND hDlg = CreateDialogIndirectW(g_app.hInstance, &tmpl.dt, hwndParent, SettingsDlgProc);
     if (!hDlg) return;
     SetWindowTextW(hDlg, I18nGet(L"ui.settings").c_str());
+    EnableThemeDialogTexture(hDlg, ETDT_ENABLETAB);
 
     // ピクセルサイズに補正（非クライアント領域を加算）
     RECT rc = { 0, 0, DW, DH };

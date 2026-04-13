@@ -153,9 +153,10 @@ static void GetSizeFromWicStream(const BYTE* data, size_t size, const std::wstri
 }
 
 // 見開き判定用サイズ優先プリフェッチ（軽量：ヘッダだけ読んでサイズキャッシュに入れる）
-static void PrefetchSizesForSpread(int currentIndex, int direction, int gen)
+static void PrefetchSizesForSpread(int currentIndex, int direction, int gen,
+                                    const std::vector<std::wstring>& files)
 {
-    int total = (int)g_app.nav.viewableFiles.size();
+    int total = (int)files.size();
     // 現在ページ周辺の数ページ分のサイズを優先取得
     for (int offset = 0; offset <= 6; offset++)
     {
@@ -163,7 +164,7 @@ static void PrefetchSizesForSpread(int currentIndex, int direction, int gen)
         if (idx < 0 || idx >= total) continue;
         if (gen != g_prefetchGeneration.load()) break;
 
-        const std::wstring& path = g_app.nav.viewableFiles[idx];
+        const std::wstring& path = files[idx];
 
         // 書庫内: StreamCacheになければ個別展開→サイズ取得
         std::wstring arcPath, entryPath;
@@ -205,6 +206,10 @@ static void PrefetchSizesForSpread(int currentIndex, int direction, int gen)
     }
 }
 
+static bool g_firstPrefetchAfterOpen = false;
+
+void PrefetchSetFirstLoad() { g_firstPrefetchAfterOpen = true; }
+
 void PrefetchStart(int currentIndex, int direction)
 {
     // 世代を進める（前のワーカーはそのまま走り続けるがUI通知はしない）
@@ -215,12 +220,12 @@ void PrefetchStart(int currentIndex, int direction)
 
     // 見開き判定用サイズ優先プリフェッチ（バックグラウンド）
     {
-        struct SizeCtx { int idx; int dir; int gen; };
-        auto* ctx = new SizeCtx{ currentIndex, direction, gen };
+        struct SizeCtx { int idx; int dir; int gen; std::vector<std::wstring> files; };
+        auto* ctx = new SizeCtx{ currentIndex, direction, gen, g_app.nav.viewableFiles };
         PTP_WORK work = CreateThreadpoolWork([](PTP_CALLBACK_INSTANCE, PVOID p, PTP_WORK) {
             auto* c = (SizeCtx*)p;
             ComInitGuard com;
-            PrefetchSizesForSpread(c->idx, c->dir, c->gen);
+            PrefetchSizesForSpread(c->idx, c->dir, c->gen, c->files);
             delete c;
         }, ctx, nullptr);
         if (work) SubmitThreadpoolWork(work);
@@ -236,8 +241,13 @@ void PrefetchStart(int currentIndex, int direction)
         cachedCount = std::max(1, s.prefetchCount);
     }
     int count = cachedCount;
-    if (g_app.nav.inArchiveMode) count = count * 3 / 2;
-    if (g_scrollSpeed > 0) count = count * 2; // 高速スクロール時は2倍
+    if (g_firstPrefetchAfterOpen) {
+        count = 6; // 初回は少量（表紙デコードとの競合を軽減）
+        g_firstPrefetchAfterOpen = false;
+    } else {
+        if (g_app.nav.inArchiveMode) count = count * 3 / 2;
+        if (g_scrollSpeed > 0) count = count * 2; // 高速スクロール時は2倍
+    }
     int fwdCount = std::max(1, (count * 3 + 3) / 4);
     int revCount = count - fwdCount;
 

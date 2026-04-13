@@ -135,6 +135,7 @@ static void CreateControlBarTooltip(HWND hwndParent, HINSTANCE hInst)
     SendMessageW(g_tooltip, TTM_SETDELAYTIME, TTDT_INITIAL, 300);
 }
 static std::wstring g_currentMediaPath;
+std::wstring g_tempMediaFile; // 一時ファイルパス（空なら一時ファイルでない、nav.cppから参照）
 static constexpr int kControlBarH = 40;
 
 // MF フォールバック用
@@ -156,9 +157,10 @@ public:
     STDMETHOD_(ULONG, Release)() override { LONG r = InterlockedDecrement(&refCount_); if (r == 0) delete this; return r; }
     STDMETHOD(GetParameters)(DWORD*, DWORD*) override { return E_NOTIMPL; }
     STDMETHOD(Invoke)(IMFAsyncResult* pResult) override {
-        if (!g_mfSession) return S_OK;
+        ComPtr<IMFMediaSession> session = g_mfSession; // ローカルコピー（スレッド安全）
+        if (!session) return S_OK;
         ComPtr<IMFMediaEvent> event;
-        if (FAILED(g_mfSession->EndGetEvent(pResult, event.GetAddressOf()))) return S_OK;
+        if (FAILED(session->EndGetEvent(pResult, event.GetAddressOf()))) return S_OK;
         MediaEventType type; event->GetType(&type);
 
         if (type == MESessionTopologyStatus) {
@@ -166,7 +168,7 @@ public:
             if (status == MF_TOPOSTATUS_READY) {
                 g_mfVideoDisplay.Reset(); g_mfAudioVolume.Reset();
                 ComPtr<IMFGetService> svc;
-                if (SUCCEEDED(g_mfSession->QueryInterface(svc.GetAddressOf()))) {
+                if (SUCCEEDED(session->QueryInterface(svc.GetAddressOf()))) {
                     svc->GetService(MR_VIDEO_RENDER_SERVICE, IID_PPV_ARGS(g_mfVideoDisplay.ReleaseAndGetAddressOf()));
                     svc->GetService(MR_POLICY_VOLUME_SERVICE, IID_PPV_ARGS(g_mfAudioVolume.ReleaseAndGetAddressOf()));
                 }
@@ -178,10 +180,10 @@ public:
                 if (g_mfAudioVolume) g_mfAudioVolume->SetMasterVolume((float)g_volume);
             }
         } else if (type == MESessionEnded) {
-            if (g_isLoop) { PROPVARIANT v; PropVariantInit(&v); v.vt = VT_I8; v.hVal.QuadPart = 0; g_mfSession->Start(&GUID_NULL, &v); PropVariantClear(&v); }
+            if (g_isLoop) { PROPVARIANT v; PropVariantInit(&v); v.vt = VT_I8; v.hVal.QuadPart = 0; session->Start(&GUID_NULL, &v); PropVariantClear(&v); }
             else { g_isPlaying = false; }
         }
-        g_mfSession->BeginGetEvent(this, nullptr);
+        session->BeginGetEvent(this, nullptr);
         return S_OK;
     }
 };
@@ -679,6 +681,11 @@ void MediaStop() {
     }
     g_mfVideoDisplay.Reset(); g_mfAudioVolume.Reset();
     g_isPlaying = false; g_mfDuration = 0; g_currentMediaPath.clear();
+    // 一時メディアファイル削除
+    if (!g_tempMediaFile.empty()) {
+        DeleteFileW(g_tempMediaFile.c_str());
+        g_tempMediaFile.clear();
+    }
     if (g_controlBar) InvalidateRect(g_controlBar, 0, TRUE);
     if (g_renderHwnd) InvalidateRect(g_renderHwnd, 0, TRUE);
 }

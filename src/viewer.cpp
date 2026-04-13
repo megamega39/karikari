@@ -395,8 +395,8 @@ static LRESULT CALLBACK ViewerWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM
 
         KillTimer(hwnd, kAnimTimerId);
 
-        DWORD now = GetTickCount();
-        DWORD dt = now - g_app.viewer.lastAnimTick;
+        ULONGLONG now = GetTickCount64();
+        ULONGLONG dt = now - g_app.viewer.lastAnimTick;
         if (dt > 5000) dt = 16; // 異常値ガード
         g_app.viewer.lastAnimTick = now;
         bool needRepaint = false;
@@ -793,7 +793,9 @@ static bool ReadFileToBytes(const std::wstring& path, std::vector<BYTE>& out)
         nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
     if (hFile == INVALID_HANDLE_VALUE) return false;
     LARGE_INTEGER sz;
-    GetFileSizeEx(hFile, &sz);
+    if (!GetFileSizeEx(hFile, &sz) || sz.QuadPart == 0 || sz.QuadPart > 512LL * 1024 * 1024) {
+        CloseHandle(hFile); return false;
+    }
     out.resize((size_t)sz.QuadPart);
     DWORD read;
     ReadFile(hFile, out.data(), (DWORD)out.size(), &read, nullptr);
@@ -991,7 +993,7 @@ void ViewerLoadImage(const std::wstring& path)
     if (TryLoadAnimation(path, g_app.viewer.anim1, g_app.viewer.bitmap))
     {
         g_app.viewer.isAnimating = true;
-        g_app.viewer.lastAnimTick = GetTickCount();
+        g_app.viewer.lastAnimTick = GetTickCount64();
         g_app.nav.currentPath = path;
         g_app.viewer.zoom = 1.0f;
         g_app.viewer.scrollX = 0.0f;
@@ -1052,7 +1054,7 @@ void ViewerStartAnimationIfNeeded(const std::wstring& path1, const std::wstring&
     if (a1 || a2) {
         ++g_asyncDecodeGeneration; // アニメ開始後の古い非同期結果を無効化
         g_app.viewer.isAnimating = true;
-        g_app.viewer.lastAnimTick = GetTickCount();
+        g_app.viewer.lastAnimTick = GetTickCount64();
         g_app.viewer.animTimer = SetTimer(g_app.wnd.hwndViewer, kAnimTimerId, 16, nullptr);
     }
 }
@@ -1094,7 +1096,7 @@ void ViewerLoadImageAsync(const std::wstring& path)
                     g_app.viewer.bitmap2.Reset();
                     g_app.viewer.isSpreadActive = false;
                     g_app.viewer.isAnimating = true;
-                    g_app.viewer.lastAnimTick = GetTickCount();
+                    g_app.viewer.lastAnimTick = GetTickCount64();
                     g_app.viewer.rotation = 0;
                     g_app.nav.currentPath = path;
                     g_app.viewer.zoom = 1.0f;
@@ -1346,7 +1348,7 @@ void ViewerShowSpread(const std::wstring& path1, const std::wstring& path2)
     if (a1 || a2)
     {
         g_app.viewer.isAnimating = true;
-        g_app.viewer.lastAnimTick = GetTickCount();
+        g_app.viewer.lastAnimTick = GetTickCount64();
         g_app.viewer.animTimer = SetTimer(g_app.wnd.hwndViewer, kAnimTimerId, 16, nullptr);
     }
 

@@ -14,3 +14,4 @@ void PrefetchStart(int currentIndex, int direction);
 void PrefetchIdleStart(int currentIndex, int direction); // アイドル時追加先読み
 void PrefetchCancel();
 void PrefetchResetSettings(); // 設定変更時に呼ぶ
+void PrefetchSetFirstLoad();  // 書庫オープン直後の初回プリフェッチを少量にする

@@ -144,8 +144,11 @@ void HandleCommand(HWND hwnd, UINT cmd)
         ShowNormalUI(); // ツリーとリストを表示
         HideNormalUI(); // フォルダラベル/ソートボタンを非表示
         if (g_app.wnd.hwndBookshelfToolbar) ShowWindow(g_app.wnd.hwndBookshelfToolbar, SW_SHOW);
+        UpdateSortButtonLabels();
+        g_app.isRevealing = true; // ツリー再構築中のTVN_SELCHANGED抑制
         ShowBookshelfTree();
         RevealCurrentPath();
+        g_app.isRevealing = false;
         UpdateAddressBar(I18nGet(L"ui.bookshelf").c_str());
         LayoutChildren(hwnd);
         break;

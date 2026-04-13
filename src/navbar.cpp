@@ -71,30 +71,34 @@ HIMAGELIST LoadImageListCache(const wchar_t* cacheName)
     HANDLE hFile = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, 0, nullptr);
     if (hFile == INVALID_HANDLE_VALUE) return nullptr;
 
-    DWORD size = GetFileSize(hFile, nullptr);
+    LARGE_INTEGER liSize;
+    if (!GetFileSizeEx(hFile, &liSize) || liSize.QuadPart == 0 || liSize.QuadPart > 100LL * 1024 * 1024) {
+        CloseHandle(hFile); return nullptr;
+    }
+    DWORD size = (DWORD)liSize.QuadPart;
     std::vector<BYTE> data(size);
     DWORD read; ReadFile(hFile, data.data(), size, &read, nullptr);
     CloseHandle(hFile);
 
-    IStream* pStream = SHCreateMemStream(data.data(), size);
+    ComPtr<IStream> pStream;
+    pStream.Attach(SHCreateMemStream(data.data(), size));
     if (!pStream) return nullptr;
-    HIMAGELIST hil = ImageList_Read(pStream);
-    pStream->Release();
+    HIMAGELIST hil = ImageList_Read(pStream.Get());
     return hil;
 }
 
 void SaveImageListCache(HIMAGELIST hil, const wchar_t* cacheName)
 {
-    IStream* pStream = SHCreateMemStream(nullptr, 0);
+    ComPtr<IStream> pStream;
+    pStream.Attach(SHCreateMemStream(nullptr, 0));
     if (!pStream) return;
-    ImageList_Write(hil, pStream);
+    ImageList_Write(hil, pStream.Get());
 
     STATSTG stat; pStream->Stat(&stat, STATFLAG_NONAME);
     LARGE_INTEGER zero = {}; pStream->Seek(zero, STREAM_SEEK_SET, nullptr);
 
     std::vector<BYTE> data((size_t)stat.cbSize.QuadPart);
     ULONG read; pStream->Read(data.data(), (ULONG)data.size(), &read);
-    pStream->Release();
 
     std::wstring path = GetCachePath(cacheName);
     HANDLE hFile = CreateFileW(path.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, 0, nullptr);

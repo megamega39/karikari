@@ -11,6 +11,7 @@
 #include "media.h"
 #include "viewer.h"
 #include "window.h"
+#include <algorithm>
 #include <wincodec.h>
 #include <wrl/client.h>
 
@@ -106,6 +107,14 @@ void CopyToClipboard(HWND hwnd, const std::wstring& text)
     CloseClipboard();
 }
 
+// パスからダブルクォートを除去（ファイルシステムで使えない文字だが安全のため）
+static std::wstring SanitizePath(const std::wstring& p)
+{
+    std::wstring s = p;
+    s.erase(std::remove(s.begin(), s.end(), L'"'), s.end());
+    return s;
+}
+
 void ShowInExplorer(const std::wstring& path)
 {
     // 書庫内パスの場合は書庫ファイル自体を対象にする
@@ -113,6 +122,7 @@ void ShowInExplorer(const std::wstring& path)
     std::wstring arcPath, entryPath;
     if (SplitArchivePath(path, arcPath, entryPath))
         realPath = arcPath;
+    realPath = SanitizePath(realPath);
 
     DWORD attr = GetFileAttributesW(realPath.c_str());
     std::wstring cmdLine;
@@ -322,6 +332,14 @@ void ShowFileContextMenu(HWND hwnd, const std::wstring& path, POINT pt)
         auto pos = propPath.find_last_of(L'\\');
         if (pos != std::wstring::npos) { parent = propPath.substr(0, pos); name = propPath.substr(pos + 1); }
         else { parent = L"."; name = propPath; }
+        // パスのダブルクォートをVBSエスケープ（"" に置換）
+        for (auto* s : {&parent, &name}) {
+            size_t pos = 0;
+            while ((pos = s->find(L'"', pos)) != std::wstring::npos) {
+                s->replace(pos, 1, L"\"\"");
+                pos += 2;
+            }
+        }
         // VBSスクリプト生成
         std::wstring vbs = L"Set s=CreateObject(\"Shell.Application\")\r\n"
             L"Set f=s.NameSpace(\"" + parent + L"\")\r\n"
@@ -353,8 +371,9 @@ void ShowFileContextMenu(HWND hwnd, const std::wstring& path, POINT pt)
     else if (cmd == CTX_OPEN_ASSOC && !path.empty())
     {
         std::wstring arcP, entP;
-        std::wstring openPath = SplitArchivePath(path, arcP, entP) ? arcP : path;
-        // cmd /c start で関連付けアプリを起動
+        std::wstring openPath = SanitizePath(SplitArchivePath(path, arcP, entP) ? arcP : path);
+        // CreateProcessW + cmd /c start で関連付けアプリを起動
+        // パスからダブルクォートを除去済みなのでインジェクション防止
         std::wstring cmdLine = L"cmd /c start \"\" \"" + openPath + L"\"";
         STARTUPINFOW si = {}; si.cb = sizeof(si);
         PROCESS_INFORMATION pi = {};

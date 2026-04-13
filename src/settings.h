@@ -12,7 +12,7 @@ struct AppSettings {
 
     // ユーザー設定
     int cacheSizeMB = 512;
-    int prefetchCount = 16;
+    int prefetchCount = 12;
     std::wstring language = L"ja";
     bool wrapNavigation = true;
     bool spreadFirstSingle = true;    // 見開き時最初のページを単独表示（leeyez_kai準拠）

@@ -83,9 +83,6 @@ void UpdateSortButtonLabels()
     TreeSortMode mode = GetTreeSortMode();
     bool desc = GetTreeSortDescending();
     const wchar_t* arrow = desc ? L" \u25BC" : L" \u25B2"; // ▼ ▲
-    const wchar_t* names[] = { L"Name", L"Date", L"Size", L"Type" };
-    // i18nキーで名前取得
-    const wchar_t* keys[] = { L"list.name", L"list.date", L"list.type", L"list.type" };
     std::wstring label;
     switch (mode) {
     case SortByName: label = I18nGet(L"list.name"); break;
@@ -170,6 +167,8 @@ void RebuildUI()
     {
         LVCOLUMNW lvc = {};
         lvc.mask = LVCF_TEXT;
+        // NOTE: (LPWSTR) cast は安全 — LVM_SETCOLUMNW は pszText を読み取りのみで使用する。
+        // I18nGet() の戻り値(const wstring&)はstatic mapの参照なのでSendMessage呼び出し中有効。
         lvc.pszText = (LPWSTR)I18nGet(L"list.name").c_str();
         SendMessageW(g_app.wnd.hwndList, LVM_SETCOLUMNW, 0, (LPARAM)&lvc);
         lvc.pszText = (LPWSTR)I18nGet(L"list.size").c_str();
@@ -747,7 +746,20 @@ static void HandleNotify(HWND hwnd, LPNMHDR pnm)
                     }
                     else if (path.size() > 4 && path.substr(0, 4) == L"CAT:")
                     {
-                        // カテゴリ選択: アイテムをListViewに表示
+                        // カテゴリ選択: ビューアーをクリアしてアイテムをListViewに表示
+                        MediaStop();
+                        g_app.nav.isMediaMode = false;
+                        ViewerStopAnimation();
+                        g_app.viewer.bitmap.Reset();
+                        g_app.viewer.bitmap2.Reset();
+                        g_app.viewer.isSpreadActive = false;
+                        g_app.nav.currentPath.clear();
+                        g_app.nav.currentFileIndex = -1;
+                        g_app.nav.inArchiveMode = false;
+                        g_app.nav.currentArchive.clear();
+                        InvalidateRect(g_app.wnd.hwndViewer, nullptr, FALSE);
+                        LayoutChildren(hwnd);
+
                         std::wstring catId = path.substr(4);
                         g_app.nav.fileItems.clear();
                         g_app.nav.viewableFiles.clear();
@@ -777,6 +789,11 @@ static void HandleNotify(HWND hwnd, LPNMHDR pnm)
                     {
                         std::wstring itemPath = path.substr(5);
                         NavigateTo(itemPath);
+                    }
+                    else
+                    {
+                        // ITEM:の子ノード（展開されたサブフォルダ/書庫）: 通常パスでナビゲート
+                        NavigateTo(path);
                     }
                 }
                 // 通常モード: デバウンス
@@ -931,6 +948,7 @@ static void HandleNotify(HWND hwnd, LPNMHDR pnm)
                     std::wstring catId = tag.substr(4);
                     BookshelfRenameCategory(catId, pdi->item.pszText);
                     SetWindowLongPtrW(hwnd, DWLP_MSGRESULT, TRUE);
+                    if (GetTreeMode() == 1) ShowBookshelfTree();
                 }
                 // 本棚ITEM:ノードのリネーム（実ファイル/フォルダ）
                 else if (tag.size() > 5 && tag.substr(0, 5) == L"ITEM:")
@@ -971,6 +989,7 @@ static void HandleNotify(HWND hwnd, LPNMHDR pnm)
                         SetWindowLongPtrW(hwnd, DWLP_MSGRESULT, TRUE);
                         LoadFolder(g_app.nav.currentFolder);
                         PopulateListView();
+                        if (GetTreeMode() == 1) ShowBookshelfTree();
                     }
                     else
                         SetWindowLongPtrW(hwnd, DWLP_MSGRESULT, FALSE);
@@ -1555,6 +1574,26 @@ static LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
             // 履歴リストにホバープレビュー用サブクラス
             SetWindowSubclass(g_app.wnd.hwndHistoryList, [](HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam,
                 UINT_PTR, DWORD_PTR) -> LRESULT {
+                // キー入力を親に転送（ページ送り等のショートカット用）
+                if (msg == WM_KEYDOWN)
+                {
+                    switch (wParam)
+                    {
+                    case VK_LEFT: case VK_RIGHT:
+                    case VK_HOME: case VK_END:
+                    case VK_RETURN:
+                    case VK_F2: case VK_F5: case VK_F11: case VK_F1:
+                    case VK_DELETE: case VK_ESCAPE: case VK_SPACE:
+                        SendMessageW(GetParent(hwnd), WM_KEYDOWN, wParam, lParam);
+                        return 0;
+                    }
+                    if (wParam >= 'A' && wParam <= 'Z')
+                    { SendMessageW(GetParent(hwnd), WM_KEYDOWN, wParam, lParam); return 0; }
+                    if (wParam >= '0' && wParam <= '9')
+                    { SendMessageW(GetParent(hwnd), WM_KEYDOWN, wParam, lParam); return 0; }
+                }
+                if (msg == WM_CHAR && (wParam == L'\r' || wParam == L'\n' || wParam == L'\t' || wParam == L'\x1b'))
+                    return 0;
                 if (msg == WM_MOUSEMOVE && g_app.hoverPreviewEnabled)
                 {
                     LVHITTESTINFO ht = {};

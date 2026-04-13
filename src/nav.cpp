@@ -20,9 +20,13 @@
 #include "media.h"
 #include "window.h"
 #include "viewer_toolbar.h"
+#include "i18n.h"
 #include <shlwapi.h>
 
 static std::atomic<int> g_archiveLoadGeneration{0};
+
+// media.cpp で定義: 一時メディアファイルパス（MediaStop時に削除）
+extern std::wstring g_tempMediaFile;
 
 // スクロール速度判定用
 static ULONGLONG g_lastGoToTime = 0;
@@ -47,7 +51,7 @@ void LoadArchiveToList(const std::wstring& archivePath)
 
     if (!OpenArchiveAndGetEntries(archivePath, entryRefs) || entryRefs.empty())
     {
-        UpdateStatusBar(archivePath, 0, 0, L"書庫を開けません（7z.dll が見つからないか非対応形式）");
+        UpdateStatusBar(archivePath, 0, 0, I18nGet(L"status.cantopen").c_str());
         g_app.nav.inArchiveMode = false;
         PopulateListView();
         return;
@@ -223,6 +227,17 @@ void NavigateTo(const std::wstring& path, NavigateOptions opts)
         g_app.nav.inArchiveMode = false;
         g_app.nav.currentArchive.clear();
 
+        // ビューアー/メディアをクリア（前の書庫の残像を消す）
+        MediaStop();
+        g_app.nav.isMediaMode = false;
+        ViewerStopAnimation();
+        g_app.viewer.bitmap.Reset();
+        g_app.viewer.bitmap2.Reset();
+        g_app.viewer.isSpreadActive = false;
+        g_app.nav.currentPath.clear();
+        g_app.nav.currentFileIndex = -1;
+        InvalidateRect(g_app.wnd.hwndViewer, nullptr, FALSE);
+
         if (GetTreeMode() == 0)
             ShowNormalTree(); // 通常モード時のみ（本棚/履歴モードはそのまま）
         LoadFolder(path);
@@ -261,7 +276,7 @@ void NavigateTo(const std::wstring& path, NavigateOptions opts)
         PopulateListView();
         UpdateAddressBar(path);
         SetMainTitle(path);
-        UpdateStatusBar(path, 0, 0, L"読み込み中...");
+        UpdateStatusBar(path, 0, 0, I18nGet(L"status.loading").c_str());
 
         // 世代番号インクリメント
         int gen = ++g_archiveLoadGeneration;
@@ -341,6 +356,7 @@ void NavigateTo(const std::wstring& path, NavigateOptions opts)
     }
     else if (IsImageFile(path) || IsMediaFile(path))
     {
+        bool wasArchive = g_app.nav.inArchiveMode;
         g_app.nav.inArchiveMode = false;
         g_app.nav.currentArchive.clear();
 
@@ -349,7 +365,8 @@ void NavigateTo(const std::wstring& path, NavigateOptions opts)
         PathRemoveFileSpecW(folder);
         std::wstring folderStr(folder);
 
-        if (g_app.nav.currentFolder.empty() || _wcsicmp(g_app.nav.currentFolder.c_str(), folderStr.c_str()) != 0)
+        // 書庫モードから来た場合は強制的にフォルダを再読み込み（viewableFilesが書庫内エントリのため）
+        if (wasArchive || g_app.nav.currentFolder.empty() || _wcsicmp(g_app.nav.currentFolder.c_str(), folderStr.c_str()) != 0)
         {
             LoadFolder(folderStr);
             PopulateListView();
@@ -481,6 +498,7 @@ static void PlayMediaFile(int index, const std::wstring& path)
             if (!tempPath.empty())
             {
                 MediaPlay(tempPath);
+                g_tempMediaFile = tempPath; // 一時ファイルパスを記録（MediaStop時に削除）
             }
             else if (!buf.empty())
             {
@@ -502,6 +520,7 @@ static void PlayMediaFile(int index, const std::wstring& path)
                     WriteFile(hFile, buf.data(), (DWORD)buf.size(), &written, nullptr);
                     CloseHandle(hFile);
                     MediaPlay(tmpFile);
+                    g_tempMediaFile = tmpFile; // 一時ファイルパスを記録（MediaStop時に削除）
                 }
             }
         }
@@ -731,6 +750,7 @@ void ApplyArchiveLoadResult(ArchiveLoadResult* result)
     if (_wcsicmp(g_app.nav.currentArchive.c_str(), result->archivePath.c_str()) != 0)
         return;
 
+    ClearSpreadCache(); // 書庫切替時に見開き判定キャッシュをクリア
     g_app.nav.fileItems = std::move(result->fileItems);
     g_app.nav.viewableFiles = std::move(result->viewableFiles);
     g_app.nav.viewableFileIndex = std::move(result->viewableFileIndex);
@@ -751,7 +771,7 @@ void ApplyArchiveLoadResult(ArchiveLoadResult* result)
 
     if (!g_app.nav.viewableFiles.empty())
     {
-        PrefetchStart(0, 1);
+        PrefetchSetFirstLoad(); // 初回プリフェッチは少量（表紙表示優先）
         GoToFile(0);
     }
 }

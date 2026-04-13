@@ -47,6 +47,7 @@ static bool IsSupportedFile(const std::wstring& name, bool isDir)
 
 void LoadFolder(const std::wstring& folderPath)
 {
+    ClearSpreadCache(); // フォルダ切替時に見開き判定キャッシュをクリア
     g_app.nav.fileItems.clear();
     g_app.nav.viewableFiles.clear();
     g_app.nav.currentFolder = folderPath;
