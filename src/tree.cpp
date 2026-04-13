@@ -396,10 +396,17 @@ void InitFolderTree()
         // ボリュームラベル取得（leeyez_kai準拠: "ラベル (C:)" 形式）
         wchar_t volName[MAX_PATH] = {};
         std::wstring displayName;
+        UINT driveType = GetDriveTypeW(drive.c_str());
         if (GetVolumeInformationW(drive.c_str(), volName, MAX_PATH, nullptr, nullptr, nullptr, nullptr, 0) && volName[0])
             displayName = std::wstring(volName) + L" (" + driveLetter + L")";
+        else if (driveType == DRIVE_REMOTE)
+            displayName = I18nGet(L"drive.network") + L" (" + driveLetter + L")";
+        else if (driveType == DRIVE_REMOVABLE)
+            displayName = I18nGet(L"drive.removable") + L" (" + driveLetter + L")";
+        else if (driveType == DRIVE_CDROM)
+            displayName = I18nGet(L"drive.cdrom") + L" (" + driveLetter + L")";
         else
-            displayName = L"ローカルディスク (" + driveLetter + L")";
+            displayName = I18nGet(L"drive.local") + L" (" + driveLetter + L")";
 
         InsertTreeItem(hwnd, TVI_ROOT, displayName, drive, true);
         p += wcslen(p) + 1;

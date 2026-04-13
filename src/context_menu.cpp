@@ -239,19 +239,19 @@ void ShowFileContextMenu(HWND hwnd, const std::wstring& path, POINT pt)
         AppendMenuW(hShelfMenu, MF_STRING, CTX_SHELF_BASE + i, cats[i].name.c_str());
     if (!cats.empty())
         AppendMenuW(hShelfMenu, MF_SEPARATOR, 0, nullptr);
-    AppendMenuW(hShelfMenu, MF_STRING, CTX_SHELF_NEW, L"新しい本棚を作成...");
+    AppendMenuW(hShelfMenu, MF_STRING, CTX_SHELF_NEW, I18nGet(L"ctx.newshelf").c_str());
     // フォルダの場合:「フォルダを本棚として追加」
     DWORD pathAttr = GetFileAttributesW(path.c_str());
     if (pathAttr != INVALID_FILE_ATTRIBUTES && (pathAttr & FILE_ATTRIBUTE_DIRECTORY))
     {
         AppendMenuW(hShelfMenu, MF_SEPARATOR, 0, nullptr);
-        AppendMenuW(hShelfMenu, MF_STRING, CTX_SHELF_AS_CAT, L"フォルダを本棚として追加");
+        AppendMenuW(hShelfMenu, MF_STRING, CTX_SHELF_AS_CAT, I18nGet(L"ctx.shelfascat").c_str());
     }
-    AppendMenuW(hMenu, MF_POPUP, (UINT_PTR)hShelfMenu, L"本棚に追加");
+    AppendMenuW(hMenu, MF_POPUP, (UINT_PTR)hShelfMenu, I18nGet(L"ctx.addshelf").c_str());
 
     // 本棚から解除（本棚に含まれている場合）
     if (BookshelfContains(path))
-        AppendMenuW(hMenu, MF_STRING, CTX_REMOVE_SHELF, L"本棚から解除");
+        AppendMenuW(hMenu, MF_STRING, CTX_REMOVE_SHELF, I18nGet(L"ctx.removeshelf").c_str());
 
     // 削除（通常モード・本棚モードのみ、特殊フォルダ・ドライブ・書庫内は非表示）
     {
@@ -374,7 +374,7 @@ void ShowFileContextMenu(HWND hwnd, const std::wstring& path, POINT pt)
     {
         // 新しい本棚を作成して追加
         wchar_t buf[256] = {};
-        if (ShowInputDialog(hwnd, L"新しい本棚を作成", L"本棚名を入力してください:", buf, 256, L""))
+        if (ShowInputDialog(hwnd, I18nGet(L"ctx.shelfname").c_str(), I18nGet(L"ctx.shelfprompt").c_str(), buf, 256, L""))
         {
             auto& cat = BookshelfAddCategory(buf);
             BookshelfAddItem(cat.id, fileName, path);

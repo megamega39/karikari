@@ -838,13 +838,13 @@ void SwitchToListView()
     // カラム再設定
     LVCOLUMNW lvc = {};
     lvc.mask = LVCF_TEXT | LVCF_WIDTH;
-    lvc.cx = 200; lvc.pszText = (LPWSTR)L"名前";
+    lvc.cx = 200; lvc.pszText = (LPWSTR)I18nGet(L"list.name").c_str();
     SendMessageW(hwnd, LVM_INSERTCOLUMNW, 0, (LPARAM)&lvc);
-    lvc.cx = 80; lvc.pszText = (LPWSTR)L"サイズ";
+    lvc.cx = 80; lvc.pszText = (LPWSTR)I18nGet(L"list.size").c_str();
     SendMessageW(hwnd, LVM_INSERTCOLUMNW, 1, (LPARAM)&lvc);
-    lvc.cx = 90; lvc.pszText = (LPWSTR)L"種類";
+    lvc.cx = 90; lvc.pszText = (LPWSTR)I18nGet(L"list.type").c_str();
     SendMessageW(hwnd, LVM_INSERTCOLUMNW, 2, (LPARAM)&lvc);
-    lvc.cx = 130; lvc.pszText = (LPWSTR)L"更新日時";
+    lvc.cx = 130; lvc.pszText = (LPWSTR)I18nGet(L"list.date").c_str();
     SendMessageW(hwnd, LVM_INSERTCOLUMNW, 3, (LPARAM)&lvc);
 
     // 保存された列順序・幅を復元

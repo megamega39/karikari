@@ -514,14 +514,14 @@ static bool ShowKeyCaptureDialog(HWND hParent, KeyCombo& kc)
     int x = parentRc.left + (parentRc.right - parentRc.left - w) / 2;
     int y = parentRc.top + (parentRc.bottom - parentRc.top - h) / 2;
 
-    HWND hDlg = CreateWindowExW(WS_EX_DLGMODALFRAME, L"KarikariKeyCapture", L"キー入力",
+    HWND hDlg = CreateWindowExW(WS_EX_DLGMODALFRAME, L"KarikariKeyCapture", I18nGet(L"settings.keycapture").c_str(),
         WS_POPUP | WS_CAPTION | WS_SYSMENU,
         x, y, w, h, hParent, nullptr, g_app.hInstance, nullptr);
     if (!hDlg) return false;
 
     SetWindowLongPtrW(hDlg, GWLP_USERDATA, (LONG_PTR)&kc);
 
-    HWND hLabel = CreateWindowExW(0, L"STATIC", L"新しいキーを押してください...",
+    HWND hLabel = CreateWindowExW(0, L"STATIC", I18nGet(L"settings.keyprompt").c_str(),
         WS_CHILD | WS_VISIBLE | SS_CENTER,
         10, 15, 250, 30, hDlg, nullptr, g_app.hInstance, nullptr);
     if (g_dlgFont) SendMessageW(hLabel, WM_SETFONT, (WPARAM)g_dlgFont, TRUE);
@@ -654,7 +654,7 @@ static INT_PTR CALLBACK SettingsDlgProc(HWND hDlg, UINT msg, WPARAM wParam, LPAR
         }
         else if (LOWORD(wParam) == IDC_DEFAULTS)
         {
-            if (MessageBoxW(hDlg, L"すべての設定をデフォルトに戻しますか？", L"確認", MB_YESNO | MB_ICONQUESTION) == IDYES)
+            if (MessageBoxW(hDlg, I18nGet(L"settings.resetconfirm").c_str(), I18nGet(L"dlg.confirm").c_str(), MB_YESNO | MB_ICONQUESTION) == IDYES)
             {
                 // デフォルト値でUIを再設定
                 AppSettings def; // コンストラクタでデフォルト値
@@ -798,9 +798,9 @@ void ShowSettingsDialog(HWND hwndParent)
 
     TCITEMW tci = {};
     tci.mask = TCIF_TEXT;
-    tci.pszText = (LPWSTR)L"一般";
+    tci.pszText = (LPWSTR)I18nGet(L"settings.tab.general").c_str();
     SendMessageW(g_hTab, TCM_INSERTITEMW, 0, (LPARAM)&tci);
-    tci.pszText = (LPWSTR)L"ショートカット";
+    tci.pszText = (LPWSTR)I18nGet(L"settings.tab.shortcuts").c_str();
     SendMessageW(g_hTab, TCM_INSERTITEMW, 1, (LPARAM)&tci);
 
     int tx = S(14), ty = S(32);
@@ -811,41 +811,41 @@ void ShowSettingsDialog(HWND hwndParent)
     GL(MkCombo(hDlg, editX, ty, editW, S(300), IDC_LANG_COMBO));
     ty += S(30);
 
-    GL(MkLabel(hDlg, tx, ty, S(200), lh, L"ナビゲーション", true));
+    GL(MkLabel(hDlg, tx, ty, S(200), lh, I18nGet(L"settings.nav").c_str(), true));
     ty += S(20);
-    GL(MkCheck(hDlg, tx + pad, ty, W - S(30), ch, IDC_WRAP_NAV, L"端でループする（最後から最初に戻る）"));
+    GL(MkCheck(hDlg, tx + pad, ty, W - S(30), ch, IDC_WRAP_NAV, I18nGet(L"settings.wrap").c_str()));
     ty += S(20);
-    GL(MkCheck(hDlg, tx + pad, ty, W - S(30), ch, IDC_SPREAD_FIRST, L"見開き時に最初のページを単独表示する"));
+    GL(MkCheck(hDlg, tx + pad, ty, W - S(30), ch, IDC_SPREAD_FIRST, I18nGet(L"settings.spreadfirst").c_str()));
     ty += S(24);
 
-    GL(MkLabel(hDlg, tx, ty, S(200), lh, L"ファイル読み込み", true));
+    GL(MkLabel(hDlg, tx, ty, S(200), lh, I18nGet(L"settings.fileload").c_str(), true));
     ty += S(20);
-    GL(MkCheck(hDlg, tx + pad, ty, W - S(30), ch, IDC_RECURSIVE, L"サブフォルダも含めて画像を表示（再帰表示）"));
+    GL(MkCheck(hDlg, tx + pad, ty, W - S(30), ch, IDC_RECURSIVE, I18nGet(L"settings.recursive").c_str()));
     ty += S(24);
 
-    GL(MkLabel(hDlg, tx, ty, S(200), lh, L"メディア", true));
+    GL(MkLabel(hDlg, tx, ty, S(200), lh, I18nGet(L"settings.media").c_str(), true));
     ty += S(20);
-    GL(MkCheck(hDlg, tx + pad, ty, W - S(30), ch, IDC_AUTOPLAY, L"動画・音声を自動再生"));
+    GL(MkCheck(hDlg, tx + pad, ty, W - S(30), ch, IDC_AUTOPLAY, I18nGet(L"settings.autoplay").c_str()));
     ty += S(24);
 
-    GL(MkLabel(hDlg, tx, ty, S(200), lh, L"パフォーマンス", true));
+    GL(MkLabel(hDlg, tx, ty, S(200), lh, I18nGet(L"settings.perf").c_str(), true));
     ty += S(22);
-    GL(MkLabel(hDlg, tx + pad, ty + 2, S(200), lh, L"キャッシュメモリ上限 (MB)"));
+    GL(MkLabel(hDlg, tx + pad, ty + 2, S(200), lh, I18nGet(L"settings.cache").c_str()));
     { HWND h = MkEdit(hDlg, editX, ty, editW, eh, IDC_CACHE_EDIT); GL(h); GL(MkUpDown(hDlg, h, 0, 50, 2000, 256)); }
     ty += S(28);
 
-    GL(MkLabel(hDlg, tx, ty, S(200), lh, L"表示", true));
+    GL(MkLabel(hDlg, tx, ty, S(200), lh, I18nGet(L"settings.display").c_str(), true));
     ty += S(22);
-    GL(MkLabel(hDlg, tx + pad, ty + 2, S(200), lh, L"見開き判定の閾値"));
+    GL(MkLabel(hDlg, tx + pad, ty + 2, S(200), lh, I18nGet(L"settings.threshold").c_str()));
     GL(MkEdit(hDlg, editX, ty, editW, eh, IDC_THRESH_EDIT, 0));
     ty += S(26);
-    GL(MkLabel(hDlg, tx + pad, ty + 2, S(200), lh, L"グリッドサムネイルサイズ (px)"));
+    GL(MkLabel(hDlg, tx + pad, ty + 2, S(200), lh, I18nGet(L"settings.thumbsize").c_str()));
     { HWND h = MkEdit(hDlg, editX, ty, editW, eh, IDC_THUMB_EDIT); GL(h); GL(MkUpDown(hDlg, h, 0, 64, 384, 192)); }
     ty += S(26);
-    GL(MkLabel(hDlg, tx + pad, ty + 2, S(200), lh, L"ホバープレビューサイズ (px)"));
+    GL(MkLabel(hDlg, tx + pad, ty + 2, S(200), lh, I18nGet(L"settings.previewsize").c_str()));
     { HWND h = MkEdit(hDlg, editX, ty, editW, eh, IDC_PREVIEW_EDIT); GL(h); GL(MkUpDown(hDlg, h, 0, 64, 1024, 320)); }
     ty += S(26);
-    GL(MkLabel(hDlg, tx + pad, ty + 2, S(200), lh, L"フォントサイズ"));
+    GL(MkLabel(hDlg, tx + pad, ty + 2, S(200), lh, I18nGet(L"settings.fontsize").c_str()));
     { HWND h = MkEdit(hDlg, editX, ty, editW, eh, IDC_FONT_EDIT); GL(h); GL(MkUpDown(hDlg, h, 0, 6, 24, 9)); }
 
     // === ショートカットタブ ===
@@ -861,20 +861,20 @@ void ShowSettingsDialog(HWND hwndParent)
 
     LVCOLUMNW lvc = {};
     lvc.mask = LVCF_TEXT | LVCF_WIDTH;
-    lvc.cx = (W - S(20)) / 2; lvc.pszText = (LPWSTR)L"アクション";
+    lvc.cx = (W - S(20)) / 2; lvc.pszText = (LPWSTR)I18nGet(L"settings.action").c_str();
     SendMessageW(g_hKeyList, LVM_INSERTCOLUMNW, 0, (LPARAM)&lvc);
-    lvc.cx = (W - S(20)) / 2; lvc.pszText = (LPWSTR)L"キー";
+    lvc.cx = (W - S(20)) / 2; lvc.pszText = (LPWSTR)I18nGet(L"settings.key").c_str();
     SendMessageW(g_hKeyList, LVM_INSERTCOLUMNW, 1, (LPARAM)&lvc);
 
     int btnY = S(30) + listH + S(4);
-    SL(MkButton(hDlg, tx, btnY, S(90), S(26), IDC_KEY_ADD, L"キー追加..."));
-    SL(MkButton(hDlg, tx + S(96), btnY, S(90), S(26), IDC_KEY_REMOVE, L"キー削除"));
-    SL(MkButton(hDlg, tx + S(192), btnY, S(120), S(26), IDC_KEY_RESET, L"デフォルトに戻す"));
+    SL(MkButton(hDlg, tx, btnY, S(90), S(26), IDC_KEY_ADD, I18nGet(L"settings.addkey").c_str()));
+    SL(MkButton(hDlg, tx + S(96), btnY, S(90), S(26), IDC_KEY_REMOVE, I18nGet(L"settings.removekey").c_str()));
+    SL(MkButton(hDlg, tx + S(192), btnY, S(120), S(26), IDC_KEY_RESET, I18nGet(L"settings.resetkeys").c_str()));
 
     // === デフォルト/OK/キャンセル ===
-    MkButton(hDlg, S(10), DH - S(34), S(120), S(26), IDC_DEFAULTS, L"デフォルトに戻す");
-    MkButton(hDlg, DW - S(170), DH - S(34), S(75), S(26), IDOK, L"OK");
-    MkButton(hDlg, DW - S(88), DH - S(34), S(75), S(26), IDCANCEL, L"キャンセル");
+    MkButton(hDlg, S(10), DH - S(34), S(120), S(26), IDC_DEFAULTS, I18nGet(L"settings.resetall").c_str());
+    MkButton(hDlg, DW - S(170), DH - S(34), S(75), S(26), IDOK, I18nGet(L"settings.ok").c_str());
+    MkButton(hDlg, DW - S(88), DH - S(34), S(75), S(26), IDCANCEL, I18nGet(L"settings.cancel").c_str());
 
     ShowTabPage(0);
     SendMessageW(hDlg, WM_INITDIALOG, 0, 0);

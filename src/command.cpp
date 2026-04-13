@@ -205,7 +205,7 @@ void HandleCommand(HWND hwnd, UINT cmd)
 
     case IDM_BOOKSHELF_CLEAR:
     {
-        if (MessageBoxW(hwnd, L"本棚の登録をすべて削除しますか？", L"確認",
+        if (MessageBoxW(hwnd, I18nGet(L"dlg.bookshelfclear").c_str(), I18nGet(L"dlg.confirm").c_str(),
             MB_YESNO | MB_ICONQUESTION) == IDYES)
         {
             BookshelfClear();
@@ -222,13 +222,13 @@ void HandleCommand(HWND hwnd, UINT cmd)
         TreeSortMode curMode = GetTreeSortMode();
         bool curDesc = GetTreeSortDescending();
 
-        AppendMenuW(hMenu, MF_STRING | (curMode == SortByName ? MF_CHECKED : 0), 2510, L"名前");
-        AppendMenuW(hMenu, MF_STRING | (curMode == SortByDate ? MF_CHECKED : 0), 2511, L"更新日時");
-        AppendMenuW(hMenu, MF_STRING | (curMode == SortBySize ? MF_CHECKED : 0), 2512, L"サイズ");
-        AppendMenuW(hMenu, MF_STRING | (curMode == SortByType ? MF_CHECKED : 0), 2513, L"種類");
+        AppendMenuW(hMenu, MF_STRING | (curMode == SortByName ? MF_CHECKED : 0), 2510, I18nGet(L"list.name").c_str());
+        AppendMenuW(hMenu, MF_STRING | (curMode == SortByDate ? MF_CHECKED : 0), 2511, I18nGet(L"list.date").c_str());
+        AppendMenuW(hMenu, MF_STRING | (curMode == SortBySize ? MF_CHECKED : 0), 2512, I18nGet(L"list.size").c_str());
+        AppendMenuW(hMenu, MF_STRING | (curMode == SortByType ? MF_CHECKED : 0), 2513, I18nGet(L"list.type").c_str());
         AppendMenuW(hMenu, MF_SEPARATOR, 0, nullptr);
-        AppendMenuW(hMenu, MF_STRING | (!curDesc ? MF_CHECKED : 0), 2514, L"昇順");
-        AppendMenuW(hMenu, MF_STRING | (curDesc ? MF_CHECKED : 0), 2515, L"降順");
+        AppendMenuW(hMenu, MF_STRING | (!curDesc ? MF_CHECKED : 0), 2514, I18nGet(L"sort.asc").c_str());
+        AppendMenuW(hMenu, MF_STRING | (curDesc ? MF_CHECKED : 0), 2515, I18nGet(L"sort.desc").c_str());
 
         RECT rc;
         HWND sortBtn = (cmd == IDM_BOOKSHELF_SORT) ?

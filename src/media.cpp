@@ -4,6 +4,7 @@
 #include "nav.h"
 #include "window.h"
 #include "settings.h"
+#include "i18n.h"
 #include <cmath>
 #include <mfapi.h>
 #include <mfidl.h>
@@ -428,8 +429,8 @@ static LRESULT CALLBACK ControlBarWndProc(HWND h, UINT m, WPARAM w, LPARAM l) {
                 ti.uFlags = TTF_IDISHWND;
                 ti.hwnd = h;
                 ti.uId = (UINT_PTR)h;
-                if (newHover == 1) ti.lpszText = (LPWSTR)L"ループ再生";
-                else if (newHover == 2) ti.lpszText = (LPWSTR)L"自動再生";
+                if (newHover == 1) ti.lpszText = (LPWSTR)I18nGet(L"media.loop").c_str();
+                else if (newHover == 2) ti.lpszText = (LPWSTR)I18nGet(L"media.autoplay").c_str();
                 else ti.lpszText = (LPWSTR)L"";
                 SendMessageW(g_tooltip, TTM_UPDATETIPTEXTW, 0, (LPARAM)&ti);
                 if (!newHover) SendMessageW(g_tooltip, TTM_POP, 0, 0);

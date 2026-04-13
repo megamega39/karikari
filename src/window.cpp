@@ -112,6 +112,56 @@ void RebuildUI()
     if (g_app.wnd.hwndAddressLabel)
         SetWindowTextW(g_app.wnd.hwndAddressLabel, I18nGet(L"ui.address").c_str());
 
+    // 本棚ツールバーの子コントロールテキスト更新
+    if (g_app.wnd.hwndBookshelfToolbar)
+    {
+        HWND hChild = GetWindow(g_app.wnd.hwndBookshelfToolbar, GW_CHILD);
+        int idx = 0;
+        while (hChild)
+        {
+            wchar_t cls[64] = {};
+            GetClassNameW(hChild, cls, 64);
+            if (_wcsicmp(cls, L"STATIC") == 0 && idx == 1) // 2番目のSTATIC = ラベル
+                SetWindowTextW(hChild, I18nGet(L"ui.bookshelf").c_str());
+            else if (_wcsicmp(cls, L"BUTTON") == 0)
+            {
+                UINT id = (UINT)GetWindowLongPtrW(hChild, GWLP_ID);
+                if (id == IDM_BOOKSHELF_CLEAR)
+                    SetWindowTextW(hChild, I18nGet(L"ui.clearall").c_str());
+            }
+            if (_wcsicmp(cls, L"STATIC") == 0) idx++;
+            hChild = GetWindow(hChild, GW_HWNDNEXT);
+        }
+    }
+
+    // 履歴ツールバーの子コントロールテキスト更新
+    if (g_app.wnd.hwndHistoryToolbar)
+    {
+        HWND hChild = GetWindow(g_app.wnd.hwndHistoryToolbar, GW_CHILD);
+        int idx = 0;
+        while (hChild)
+        {
+            wchar_t cls[64] = {};
+            GetClassNameW(hChild, cls, 64);
+            if (_wcsicmp(cls, L"STATIC") == 0 && idx == 1) // 2番目のSTATIC = ラベル
+                SetWindowTextW(hChild, I18nGet(L"ui.history").c_str());
+            else if (_wcsicmp(cls, L"BUTTON") == 0)
+            {
+                UINT id = (UINT)GetWindowLongPtrW(hChild, GWLP_ID);
+                if (id == 1500) // 履歴全削除ボタンID
+                    SetWindowTextW(hChild, I18nGet(L"ui.clearall").c_str());
+            }
+            if (_wcsicmp(cls, L"STATIC") == 0) idx++;
+            hChild = GetWindow(hChild, GW_HWNDNEXT);
+        }
+    }
+
+    // フィルターのキューバナー更新
+    if (g_app.wnd.hwndFilterBox)
+        SendMessageW(g_app.wnd.hwndFilterBox, EM_SETCUEBANNER, TRUE, (LPARAM)I18nGet(L"ui.filter").c_str());
+    if (g_app.wnd.hwndHistoryFilter)
+        SendMessageW(g_app.wnd.hwndHistoryFilter, EM_SETCUEBANNER, TRUE, (LPARAM)I18nGet(L"ui.filter").c_str());
+
     // ツリー再構築（展開状態とスクロール位置を保持）
     RefreshTree();
 
@@ -425,7 +475,7 @@ void BuildHistoryList()
 
     // グループ作成
     struct { int id; const wchar_t* name; } groups[] = {
-        { 0, L"今日" }, { 1, L"昨日" }, { 2, L"今週" }, { 3, L"先週" }, { 4, L"それ以前" }
+        { 0, I18nGet(L"group.today").c_str() }, { 1, I18nGet(L"group.yesterday").c_str() }, { 2, I18nGet(L"group.thisweek").c_str() }, { 3, I18nGet(L"group.lastweek").c_str() }, { 4, I18nGet(L"group.older").c_str() }
     };
     for (auto& g : groups)
     {
@@ -772,8 +822,8 @@ static void HandleNotify(HWND hwnd, LPNMHDR pnm)
                 {
                     // カテゴリ右クリック: 本棚削除/名前変更メニュー
                     HMENU hMenu = CreatePopupMenu();
-                    AppendMenuW(hMenu, MF_STRING, 1, L"この本棚を削除");
-                    AppendMenuW(hMenu, MF_STRING, 2, L"名前を変更");
+                    AppendMenuW(hMenu, MF_STRING, 1, I18nGet(L"ctx.deleteshelf").c_str());
+                    AppendMenuW(hMenu, MF_STRING, 2, I18nGet(L"ui.renamethis").c_str());
                     UINT cmd = TrackPopupMenu(hMenu, TPM_RETURNCMD | TPM_RIGHTBUTTON, pt.x, pt.y, 0, hwnd, nullptr);
                     DestroyMenu(hMenu);
                     if (cmd == 1)
@@ -1224,7 +1274,7 @@ static LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
                 WS_CHILD | WS_VISIBLE | SS_CENTERIMAGE, 26, 3, 40, 22, g_app.wnd.hwndBookshelfToolbar, nullptr, hInst, nullptr);
             SendMessageW(hLabel, WM_SETFONT, (WPARAM)hShelfFont, TRUE);
 
-            HWND hClear = CreateWindowExW(0, L"BUTTON", L"全削除",
+            HWND hClear = CreateWindowExW(0, L"BUTTON", I18nGet(L"ui.clearall").c_str(),
                 WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, 70, 3, 52, 22, g_app.wnd.hwndBookshelfToolbar,
                 (HMENU)(UINT_PTR)IDM_BOOKSHELF_CLEAR, hInst, nullptr);
             SendMessageW(hClear, WM_SETFONT, (WPARAM)hShelfFont, TRUE);
@@ -1405,7 +1455,7 @@ static LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
             static HFONT hFilterFont = CreateFontW(-13, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
                 DEFAULT_CHARSET, 0, 0, CLEARTYPE_QUALITY, 0, L"Segoe UI");
             SendMessageW(g_app.wnd.hwndFilterBox, WM_SETFONT, (WPARAM)hFilterFont, TRUE);
-            SendMessageW(g_app.wnd.hwndFilterBox, EM_SETCUEBANNER, TRUE, (LPARAM)L"Filter");
+            SendMessageW(g_app.wnd.hwndFilterBox, EM_SETCUEBANNER, TRUE, (LPARAM)I18nGet(L"ui.filter").c_str());
         }
         // フィルター右横パッド（スクロールバー幅分の灰色背景）
         g_app.wnd.hwndFilterPad = CreateWindowExW(
@@ -1418,16 +1468,16 @@ static LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
         LVCOLUMNW lvc = {};
         lvc.mask = LVCF_TEXT | LVCF_WIDTH;
         lvc.cx = 200;
-        lvc.pszText = (LPWSTR)L"名前";
+        lvc.pszText = (LPWSTR)I18nGet(L"list.name").c_str();
         SendMessageW(g_app.wnd.hwndList, LVM_INSERTCOLUMNW, 0, (LPARAM)&lvc);
         lvc.cx = 80;
-        lvc.pszText = (LPWSTR)L"サイズ";
+        lvc.pszText = (LPWSTR)I18nGet(L"list.size").c_str();
         SendMessageW(g_app.wnd.hwndList, LVM_INSERTCOLUMNW, 1, (LPARAM)&lvc);
         lvc.cx = 90;
-        lvc.pszText = (LPWSTR)L"種類";
+        lvc.pszText = (LPWSTR)I18nGet(L"list.type").c_str();
         SendMessageW(g_app.wnd.hwndList, LVM_INSERTCOLUMNW, 2, (LPARAM)&lvc);
         lvc.cx = 130;
-        lvc.pszText = (LPWSTR)L"更新日時";
+        lvc.pszText = (LPWSTR)I18nGet(L"list.date").c_str();
         SendMessageW(g_app.wnd.hwndList, LVM_INSERTCOLUMNW, 3, (LPARAM)&lvc);
 
         // 保存された列順序・幅を復元
@@ -1458,14 +1508,14 @@ static LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
                 WS_CHILD | WS_VISIBLE | SS_CENTERIMAGE, 26, 3, 40, 22, g_app.wnd.hwndHistoryToolbar, nullptr, hInst, nullptr);
             SendMessageW(hLabel, WM_SETFONT, (WPARAM)hHistFont, TRUE);
 
-            HWND hClear = CreateWindowExW(0, L"BUTTON", L"全削除",
+            HWND hClear = CreateWindowExW(0, L"BUTTON", I18nGet(L"ui.clearall").c_str(),
                 WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, 70, 3, 52, 22, g_app.wnd.hwndHistoryToolbar, (HMENU)1500, hInst, nullptr);
             SendMessageW(hClear, WM_SETFONT, (WPARAM)hHistFont, TRUE);
 
             g_app.wnd.hwndHistoryFilter = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"",
                 WS_CHILD | WS_VISIBLE | ES_AUTOHSCROLL, 128, 3, 100, 22, g_app.wnd.hwndHistoryToolbar, nullptr, hInst, nullptr);
             SendMessageW(g_app.wnd.hwndHistoryFilter, WM_SETFONT, (WPARAM)hHistFont, TRUE);
-            SendMessageW(g_app.wnd.hwndHistoryFilter, EM_SETCUEBANNER, TRUE, (LPARAM)L"フィルター...");
+            SendMessageW(g_app.wnd.hwndHistoryFilter, EM_SETCUEBANNER, TRUE, (LPARAM)I18nGet(L"ui.filter").c_str());
 
             // STATICの子コントロールのWM_COMMANDをメインウィンドウに転送
             SetWindowSubclass(g_app.wnd.hwndHistoryToolbar, [](HWND h, UINT msg, WPARAM wp, LPARAM lp,
@@ -1647,7 +1697,7 @@ static LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
         // 履歴「全削除」ボタン
         if (LOWORD(wParam) == 1500)
         {
-            if (MessageBoxW(hwnd, L"履歴を全て削除しますか？", L"確認", MB_YESNO | MB_ICONQUESTION) == IDYES)
+            if (MessageBoxW(hwnd, I18nGet(L"dlg.historyclear").c_str(), I18nGet(L"dlg.confirm").c_str(), MB_YESNO | MB_ICONQUESTION) == IDYES)
             {
                 HistoryClear();
                 BuildHistoryList();

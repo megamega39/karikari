@@ -282,3 +282,26 @@
   - `HandleKeyDown()` を全面書き換え: テキスト入力チェック後、FindAction→ExecuteActionの2段構成に簡素化
   - InitDefaultKeyBindings に9個の新アクション追加: bookshelf, history, list_view, grid_view, hover_preview, settings, view_cycle, bind_ltr, bind_rtl
 - **設計判断**: キーバインドをテーブル駆動にすることで、設定画面でのカスタマイズが実際に反映されるようになった。従来はInitDefaultKeyBindingsでテーブルを定義していたが、HandleKeyDownがハードコードのままだったため設定変更が無視されていた
+
+## 2026-04-13: i18n対応拡張 — ハードコード日本語テキストの国際化
+- i18n.cppに全12言語テーブルへ27個の新キーを追加（ctx.addshelf, sort.asc, ui.clearall, drive.network, media.loop, dlg.bookshelfclear, group.today 等）
+- context_menu.cpp: 本棚関連メニュー項目5箇所をI18nGet()に置換
+- command.cpp: ソートメニュー7項目 + 本棚全削除ダイアログをI18nGet()に置換
+- window.cpp: 全削除ボタン2箇所、フィルタープレースホルダ2箇所、カラムヘッダー4箇所、履歴グループ名5箇所、本棚コンテキストメニュー2箇所、履歴削除ダイアログ1箇所をI18nGet()に置換
+- tree.cpp: ドライブ種別表示名4箇所をI18nGet()に置換
+- media.cpp: ツールチップ2箇所をI18nGet()に置換、i18n.hインクルード追加
+- filelist.cpp: SwitchToListView内カラムヘッダー4箇所をI18nGet()に置換
+- **設計判断**: 既存のI18nGet()パターンに統一。文字列連結が必要なドライブ名は `I18nGet() + L" ("` の形式で対応
+
+## 2026-04-13: 設定ダイアログ i18n対応
+- i18n.cpp: 全12言語テーブルに設定ダイアログ用キー27個を追加（settings.tab.general, settings.tab.shortcuts, settings.nav, settings.wrap, settings.spreadfirst, settings.fileload, settings.recursive, settings.media, settings.autoplay, settings.perf, settings.cache, settings.display, settings.threshold, settings.thumbsize, settings.previewsize, settings.fontsize, settings.action, settings.key, settings.addkey, settings.removekey, settings.resetkeys, settings.resetall, settings.ok, settings.cancel, settings.resetconfirm, settings.keycapture, settings.keyprompt）
+- settings.cpp: ハードコード日本語テキスト全箇所をI18nGet()に置換（タブ名、セクションラベル、チェックボックス、エディットラベル、ListView列ヘッダー、ボタンテキスト、MessageBox、KeyCaptureダイアログ）
+- i18n.hは既にインクルード済みであることを確認
+
+## 2026-04-13: ヘルプダイアログ i18n対応
+- i18n.cpp: 全12言語テーブルにヘルプダイアログ用キー21個を追加（help.title, help.tab.basic, help.tab.view, help.tab.tree, help.tab.file, help.tab.settings, help.tab.about, help.version, help.subtitle, help.authorlabel, help.authorname, help.desclabel, help.desc1, help.desc2, help.close, help.text.basic, help.text.view, help.text.tree, help.text.file, help.text.settings）
+- help.text.* は5タブ分の長文テキスト（\r\n改行付き）を各言語で翻訳
+- help.cpp: g_helpTexts[] と g_tabNames[] の静的配列を削除し、i18nキー配列（g_helpTextKeys[], g_tabKeys[]）に置換
+- help.cpp: ダイアログタイトル、タブ名、Editコントロールテキスト、Aboutタブ全テキスト、閉じるボタンをI18nGet()に置換
+- help.cpp: i18n.hインクルード追加
+- **設計判断**: g_helpTexts は static const wchar_t* 配列だったため、I18nGet()の戻り値（std::wstring参照）のライフタイム問題を回避するため、CreateWindowExWでは空文字列で作成し、SetWindowTextW()で後からI18nGet()の結果を設定
