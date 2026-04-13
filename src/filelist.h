@@ -11,6 +11,8 @@ void RebuildViewableFiles();
 void ListViewSelectItem(int index, int count = 1); // count=2で見開き時2アイテム選択
 void SetFileListFilter(const std::wstring& filter);
 void RemoveFileItemByPath(const std::wstring& path);
+void StartInlineRename(int index); // ファイルリストのインラインリネーム開始
+void CancelInlineRename();         // インラインリネームキャンセル
 
 // 仮想リスト用: アイテムデータ取得ヘルパー
 std::wstring FormatFileSize(ULONGLONG size);

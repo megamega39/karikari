@@ -236,7 +236,7 @@ HWND CreateNavBar(HWND parent, HINSTANCE hInst)
     }
 
     // ツールバーの高さを固定
-    SendMessageW(hwnd, TB_SETBUTTONSIZE, 0, MAKELONG(48, 48));
+    SendMessageW(hwnd, TB_SETBUTTONSIZE, 0, MAKELONG(52, 52));
     SendMessageW(hwnd, TB_AUTOSIZE, 0, 0);
 
     g_app.wnd.hwndNavBar = hwnd;
@@ -311,7 +311,7 @@ HWND CreateNavBarRight(HWND parent, HINSTANCE hInst)
         SendMessageW(hwnd, TB_ADDBUTTONS, 1, (LPARAM)&tb);
     }
 
-    SendMessageW(hwnd, TB_SETBUTTONSIZE, 0, MAKELONG(48, 48));
+    SendMessageW(hwnd, TB_SETBUTTONSIZE, 0, MAKELONG(52, 52));
     SendMessageW(hwnd, TB_AUTOSIZE, 0, 0);
 
     g_app.wnd.hwndNavBarRight = hwnd;

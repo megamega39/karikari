@@ -177,6 +177,7 @@ void HandleCommand(HWND hwnd, UINT cmd)
     case IDM_VIEW_SINGLE:  ViewerSetViewMode(1); break;
     case IDM_VIEW_SPREAD:  ViewerSetViewMode(2); break;
     case IDM_VIEW_BINDING: ViewerToggleBinding(); break;
+    case IDM_VIEW_ROTATE_CW: ViewerRotateCW(); break;
 
     // ホバープレビュー ON/OFF
     case IDM_NAV_HOVER:
@@ -266,6 +267,9 @@ void HandleCommand(HWND hwnd, UINT cmd)
         // 本棚モード時はツリー再構築
         if (sortCmd >= 2510 && GetTreeMode() == 1)
             ShowBookshelfTree();
+        // ソートボタンラベル更新
+        if (sortCmd >= 2510)
+            UpdateSortButtonLabels();
         break;
     }
     }
@@ -281,78 +285,31 @@ void HandleCommand(HWND hwnd, UINT cmd)
     }
 }
 
-void HandleKeyDown(HWND hwnd, WPARAM vk)
+static void ExecuteAction(HWND hwnd, const std::wstring& action, HWND focused)
 {
-    // テキスト入力中はショートカット無効（Alt/Ctrlキー除く）
-    HWND focused = GetFocus();
-    if (focused == g_app.wnd.hwndAddressEdit)
+    // ナビゲーション
+    if (action == L"prev_page")
+        GoToFile(g_app.nav.currentFileIndex - GetPagesPerView());
+    else if (action == L"next_page")
+        GoToFile(g_app.nav.currentFileIndex + GetPagesPerView());
+    else if (action == L"first_page")
+        GoToFile(0);
+    else if (action == L"last_page")
+        GoToFile((int)g_app.nav.viewableFiles.size() - 1);
+    else if (action == L"prev_archive")
     {
-        // アドレスバーにフォーカス時はEsc以外スキップ
-        if (vk == VK_ESCAPE) { SetFocus(g_app.wnd.hwndMain); return; }
-        return;
-    }
-
-    bool ctrl = (GetKeyState(VK_CONTROL) & 0x8000) != 0;
-    bool alt = (GetKeyState(VK_MENU) & 0x8000) != 0;
-
-    if (alt)
-    {
-        if (vk == VK_LEFT)  { NavigateBack(); return; }
-        if (vk == VK_RIGHT) { NavigateForward(); return; }
-        if (vk == VK_UP)    { NavigateUp(); return; }
-        return;
-    }
-
-    if (ctrl)
-    {
-        if (vk == VK_OEM_PLUS || vk == VK_ADD)  { ViewerZoomIn(); return; }
-        if (vk == VK_OEM_MINUS || vk == VK_SUBTRACT) { ViewerZoomOut(); return; }
-        if (vk == '0' || vk == VK_NUMPAD0) { g_app.viewer.zoom = 1.0f; InvalidateRect(g_app.wnd.hwndViewer, nullptr, FALSE); UpdateZoomLabel(); return; }
-        if (vk == 'C') { CopyImageToClipboard(hwnd); return; }
-        if (vk == 'R')
-        {
-            bool shift = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
-            if (shift) ViewerRotateCCW(); else ViewerRotateCW();
-            return;
-        }
-        return;
-    }
-
-    switch (vk)
-    {
-    case VK_LEFT:  GoToFile(g_app.nav.currentFileIndex - GetPagesPerView()); break;
-    case VK_RIGHT: GoToFile(g_app.nav.currentFileIndex + GetPagesPerView()); break;
-    case VK_HOME:  GoToFile(0); break;
-    case VK_END:   GoToFile((int)g_app.nav.viewableFiles.size() - 1); break;
-    case VK_F5:
         if (g_app.nav.inArchiveMode && !g_app.nav.currentArchive.empty())
-        {
-            LoadArchiveToList(g_app.nav.currentArchive);
-        }
-        else if (!g_app.nav.currentFolder.empty())
-        {
-            LoadFolder(g_app.nav.currentFolder);
-            PopulateListView();
-            if (GetTreeMode() == 0)
-                SelectTreePath(g_app.nav.currentFolder);
-        }
-        break;
-    case VK_F1:
-        ShowHelpDialog(hwnd);
-        break;
-    case VK_F11:   ToggleFullscreen(hwnd); break;
-    case VK_UP:
-    case VK_DOWN:
-    {
-        // 書庫モード時: 親フォルダ内の前後の書庫に切り替え
-        if (g_app.nav.inArchiveMode && !g_app.nav.currentArchive.empty())
-        {
-            NavigateToSiblingArchive(vk == VK_UP ? -1 : 1);
-        }
-        // ツリービューにフォーカスがあればツリー操作に任せる（デフォルト動作）
-        break;
+            NavigateToSiblingArchive(-1);
     }
-    case VK_RETURN:
+    else if (action == L"next_archive")
+    {
+        if (g_app.nav.inArchiveMode && !g_app.nav.currentArchive.empty())
+            NavigateToSiblingArchive(1);
+    }
+    else if (action == L"nav_back")    NavigateBack();
+    else if (action == L"nav_forward") NavigateForward();
+    else if (action == L"nav_up")      NavigateUp();
+    else if (action == L"open_item")
     {
         // ツリーにフォーカス時: 展開/折畳み切替
         if (focused == g_app.wnd.hwndTree)
@@ -364,9 +321,9 @@ void HandleKeyDown(HWND hwnd, WPARAM vk)
                 SendMessageW(g_app.wnd.hwndTree, TVM_EXPAND,
                     (state & TVIS_EXPANDED) ? TVE_COLLAPSE : TVE_EXPAND, (LPARAM)hSel);
             }
-            break;
+            return;
         }
-        // ファイルリスト/その他にフォーカス時: 選択アイテムを開くか、ツリーの展開/折畳み
+        // ファイルリスト: 選択アイテムを開く
         int sel = (int)SendMessageW(g_app.wnd.hwndList, LVM_GETNEXTITEM, (WPARAM)-1, LVNI_SELECTED);
         if (sel >= 0 && sel < (int)g_app.nav.fileItems.size())
         {
@@ -374,58 +331,58 @@ void HandleKeyDown(HWND hwnd, WPARAM vk)
             if (item.isDirectory || IsArchiveFile(item.name))
             {
                 NavigateTo(item.fullPath);
-                break;
+                return;
             }
         }
-        // リストで対象がなければツリーの展開/折畳み
+        // フォールバック: ツリーの展開/折畳み
+        HTREEITEM hSel = (HTREEITEM)SendMessageW(g_app.wnd.hwndTree, TVM_GETNEXTITEM, TVGN_CARET, 0);
+        if (hSel)
         {
+            UINT state = (UINT)SendMessageW(g_app.wnd.hwndTree, TVM_GETITEMSTATE, (WPARAM)hSel, TVIS_EXPANDED);
+            SendMessageW(g_app.wnd.hwndTree, TVM_EXPAND,
+                (state & TVIS_EXPANDED) ? TVE_COLLAPSE : TVE_EXPAND, (LPARAM)hSel);
+        }
+    }
+    // 表示
+    else if (action == L"fit_window")     ViewerSetScaleMode(FitWindow);
+    else if (action == L"fit_width")      ViewerSetScaleMode(FitWidth);
+    else if (action == L"fit_height")     ViewerSetScaleMode(FitHeight);
+    else if (action == L"original_size")  ViewerSetScaleMode(Original);
+    else if (action == L"view_single")    ViewerSetViewMode(1);
+    else if (action == L"view_spread")    ViewerSetViewMode(2);
+    else if (action == L"view_auto")      ViewerSetViewMode(0);
+    else if (action == L"view_cycle")     ViewerSetViewMode((g_app.viewer.viewMode + 1) % 3);
+    else if (action == L"toggle_binding") ViewerToggleBinding();
+    else if (action == L"bind_ltr")       { g_app.viewer.isRTL = false; InvalidateRect(g_app.wnd.hwndViewer, nullptr, FALSE); }
+    else if (action == L"bind_rtl")       { g_app.viewer.isRTL = true; InvalidateRect(g_app.wnd.hwndViewer, nullptr, FALSE); }
+    else if (action == L"fullscreen")     ToggleFullscreen(hwnd);
+    // ズーム
+    else if (action == L"zoom_in")    ViewerZoomIn();
+    else if (action == L"zoom_out")   ViewerZoomOut();
+    else if (action == L"zoom_reset") { g_app.viewer.zoom = 1.0f; InvalidateRect(g_app.wnd.hwndViewer, nullptr, FALSE); UpdateZoomLabel(); }
+    // 編集
+    else if (action == L"copy_image")  CopyImageToClipboard(hwnd);
+    else if (action == L"rotate_cw")   ViewerRotateCW();
+    else if (action == L"rotate_ccw")  ViewerRotateCCW();
+    else if (action == L"rename")
+    {
+        if (focused == g_app.wnd.hwndTree)
+        {
+            // ツリーにフォーカス: インラインラベル編集
             HTREEITEM hSel = (HTREEITEM)SendMessageW(g_app.wnd.hwndTree, TVM_GETNEXTITEM, TVGN_CARET, 0);
             if (hSel)
-            {
-                UINT state = (UINT)SendMessageW(g_app.wnd.hwndTree, TVM_GETITEMSTATE, (WPARAM)hSel, TVIS_EXPANDED);
-                SendMessageW(g_app.wnd.hwndTree, TVM_EXPAND,
-                    (state & TVIS_EXPANDED) ? TVE_COLLAPSE : TVE_EXPAND, (LPARAM)hSel);
-            }
+                SendMessageW(g_app.wnd.hwndTree, TVM_EDITLABEL, 0, (LPARAM)hSel);
         }
-        break;
-    }
-    case VK_SPACE:
-        if (g_app.nav.isMediaMode) MediaTogglePlayPause();
-        break;
-    case VK_ESCAPE:
-        if (g_app.isFullscreen) ToggleFullscreen(hwnd);
-        break;
-    case 'W':      ViewerSetScaleMode(FitWindow); break;
-    case 'B':      ViewerToggleBinding(); break;
-    case 'L':      g_app.viewer.isRTL = false; InvalidateRect(g_app.wnd.hwndViewer, nullptr, FALSE); break;
-    case 'R':      g_app.viewer.isRTL = true; InvalidateRect(g_app.wnd.hwndViewer, nullptr, FALSE); break;
-    case 'V':      ViewerSetViewMode((g_app.viewer.viewMode + 1) % 3); break;
-    case '1':      ViewerSetViewMode(1); break;
-    case '2':      ViewerSetViewMode(2); break;
-    case '3':      ViewerSetViewMode(0); break;
-    case 'C':      // ToggleBookshelf（お気に入り表示切替）
-        HandleCommand(hwnd, IDM_NAV_BOOKSHELF);
-        break;
-    case VK_F2:
-    {
-        // 名前変更（アドレスバーを入力欄として使用）
-        int sel = (int)SendMessageW(g_app.wnd.hwndList, LVM_GETNEXTITEM, (WPARAM)-1, LVNI_SELECTED);
-        if (sel >= 0 && sel < (int)g_app.nav.fileItems.size() && !g_app.nav.inArchiveMode)
+        else
         {
-            auto& item = g_app.nav.fileItems[sel];
-            // アドレスバーにファイル名を入れて編集モードに
-            SetWindowTextW(g_app.wnd.hwndAddressEdit, item.name.c_str());
-            ShowWindow(g_app.wnd.hwndAddressEdit, SW_SHOW);
-            SetFocus(g_app.wnd.hwndAddressEdit);
-            SendMessageW(g_app.wnd.hwndAddressEdit, EM_SETSEL, 0,
-                item.name.find_last_of(L'.') != std::wstring::npos ?
-                (LPARAM)item.name.find_last_of(L'.') : -1); // 拡張子前まで選択
+            // ファイルリスト: インラインリネーム
+            int sel = (int)SendMessageW(g_app.wnd.hwndList, LVM_GETNEXTITEM, (WPARAM)-1, LVNI_SELECTED);
+            if (sel >= 0 && sel < (int)g_app.nav.fileItems.size() && !g_app.nav.inArchiveMode)
+                StartInlineRename(sel);
         }
-        break;
     }
-    case VK_DELETE:
+    else if (action == L"delete_file")
     {
-        // 選択ファイルを削除
         int sel = (int)SendMessageW(g_app.wnd.hwndList, LVM_GETNEXTITEM, (WPARAM)-1, LVNI_SELECTED);
         if (sel >= 0 && sel < (int)g_app.nav.fileItems.size())
         {
@@ -436,7 +393,6 @@ void HandleKeyDown(HWND hwnd, WPARAM vk)
                 std::wstring delPath = item.fullPath;
                 if (MessageBoxW(hwnd, msg.c_str(), I18nGet(L"dlg.confirm").c_str(), MB_YESNO | MB_ICONQUESTION) == IDYES)
                 {
-                    // 削除対象のファイルロックを解放
                     if (_wcsicmp(delPath.c_str(), g_app.nav.currentPath.c_str()) == 0)
                     {
                         ViewerStopAnimation();
@@ -446,10 +402,8 @@ void HandleKeyDown(HWND hwnd, WPARAM vk)
                     }
                     if (IsArchiveFile(delPath))
                         CloseCurrentArchive();
-
-                    // ごみ箱へ移動
                     std::wstring shPath = delPath;
-                    shPath.push_back(L'\0'); // SHFileOperation用のダブルNULL
+                    shPath.push_back(L'\0');
                     SHFILEOPSTRUCTW op = {};
                     op.wFunc = FO_DELETE;
                     op.pFrom = shPath.c_str();
@@ -462,7 +416,40 @@ void HandleKeyDown(HWND hwnd, WPARAM vk)
                 }
             }
         }
-        break;
     }
+    // メディア
+    else if (action == L"play_pause") { if (g_app.nav.isMediaMode) MediaTogglePlayPause(); }
+    // その他
+    else if (action == L"refresh")    HandleCommand(hwnd, IDM_NAV_REFRESH);
+    else if (action == L"help")       ShowHelpDialog(hwnd);
+    else if (action == L"escape")     { if (g_app.isFullscreen) ToggleFullscreen(hwnd); }
+    // 新規アクション
+    else if (action == L"bookshelf")      HandleCommand(hwnd, IDM_NAV_BOOKSHELF);
+    else if (action == L"history")        HandleCommand(hwnd, IDM_NAV_HISTORY);
+    else if (action == L"list_view")      HandleCommand(hwnd, IDM_NAV_LIST);
+    else if (action == L"grid_view")      HandleCommand(hwnd, IDM_NAV_GRID);
+    else if (action == L"hover_preview")  HandleCommand(hwnd, IDM_NAV_HOVER);
+    else if (action == L"settings")       HandleCommand(hwnd, IDM_NAV_SETTINGS);
+}
+
+void HandleKeyDown(HWND hwnd, WPARAM vk)
+{
+    HWND focused = GetFocus();
+
+    // テキスト入力中はEsc以外スキップ
+    if (focused == g_app.wnd.hwndAddressEdit ||
+        focused == g_app.wnd.hwndFilterBox ||
+        focused == g_app.wnd.hwndHistoryFilter)
+    {
+        if (vk == VK_ESCAPE) SetFocus(g_app.wnd.hwndMain);
+        return;
     }
+
+    bool ctrl = (GetKeyState(VK_CONTROL) & 0x8000) != 0;
+    bool shift = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
+    bool alt = (GetKeyState(VK_MENU) & 0x8000) != 0;
+
+    std::wstring action = FindAction((UINT)vk, ctrl, shift, alt);
+    if (!action.empty())
+        ExecuteAction(hwnd, action, focused);
 }

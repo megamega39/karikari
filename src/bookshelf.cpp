@@ -201,6 +201,26 @@ void BookshelfRemoveItem(const std::wstring& path)
     BookshelfSave();
 }
 
+void BookshelfUpdateItemPath(const std::wstring& oldPath, const std::wstring& newPath)
+{
+    std::wstring newName = newPath;
+    auto sl = newName.find_last_of(L'\\');
+    if (sl != std::wstring::npos) newName = newName.substr(sl + 1);
+
+    for (auto& cat : g_categories)
+    {
+        for (auto& item : cat.items)
+        {
+            if (_wcsicmp(item.path.c_str(), oldPath.c_str()) == 0)
+            {
+                item.path = newPath;
+                item.name = newName;
+            }
+        }
+    }
+    BookshelfSave();
+}
+
 void BookshelfClear()
 {
     g_categories.clear();

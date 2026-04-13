@@ -8,7 +8,9 @@ void ToggleFullscreen(HWND hwnd);
 void SetMainTitle(const std::wstring& path);
 void ApplyFontSize(int fontSize);
 void RebuildUI();
+void UpdateSortButtonLabels();
 
 // グローバルUIフォント（g_uiFontがnullptrでなければこちらを使用）
 extern HFONT g_uiFont;
 extern HFONT g_uiFontBold;
+extern HTREEITEM g_treeRClickItem;

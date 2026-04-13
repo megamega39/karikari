@@ -134,6 +134,77 @@ void PrefetchResetSettings()
 
 extern std::atomic<int> g_scrollSpeed; // nav.cppで定義
 
+// WICヘッダからサイズだけ取得してCacheImageSizeに入れる
+static void GetSizeFromWicStream(const BYTE* data, size_t size, const std::wstring& path)
+{
+    IWICImagingFactory* factory = GetThreadWicFactory();
+    if (!factory) return;
+    ComPtr<IWICStream> stream;
+    if (FAILED(factory->CreateStream(stream.GetAddressOf()))) return;
+    if (FAILED(stream->InitializeFromMemory(const_cast<BYTE*>(data), (DWORD)size))) return;
+    ComPtr<IWICBitmapDecoder> decoder;
+    if (FAILED(factory->CreateDecoderFromStream(stream.Get(), nullptr,
+        WICDecodeMetadataCacheOnDemand, decoder.GetAddressOf()))) return;
+    ComPtr<IWICBitmapFrameDecode> frame;
+    if (FAILED(decoder->GetFrame(0, frame.GetAddressOf()))) return;
+    UINT w = 0, h = 0;
+    if (SUCCEEDED(frame->GetSize(&w, &h)) && w > 0 && h > 0)
+        CacheImageSize(path, w, h);
+}
+
+// 見開き判定用サイズ優先プリフェッチ（軽量：ヘッダだけ読んでサイズキャッシュに入れる）
+static void PrefetchSizesForSpread(int currentIndex, int direction, int gen)
+{
+    int total = (int)g_app.nav.viewableFiles.size();
+    // 現在ページ周辺の数ページ分のサイズを優先取得
+    for (int offset = 0; offset <= 6; offset++)
+    {
+        int idx = currentIndex + offset * direction;
+        if (idx < 0 || idx >= total) continue;
+        if (gen != g_prefetchGeneration.load()) break;
+
+        const std::wstring& path = g_app.nav.viewableFiles[idx];
+
+        // 書庫内: StreamCacheになければ個別展開→サイズ取得
+        std::wstring arcPath, entryPath;
+        if (SplitArchivePath(path, arcPath, entryPath))
+        {
+            auto cached = StreamCacheGet(path);
+            if (!cached)
+            {
+                std::vector<BYTE> buffer;
+                if (ExtractToMemory(arcPath, entryPath, buffer) && !buffer.empty())
+                {
+                    StreamCachePut(path, std::move(buffer));
+                    cached = StreamCacheGet(path);
+                }
+            }
+            if (cached)
+                GetSizeFromWicStream(cached->data(), cached->size(), path);
+        }
+        else
+        {
+            // 通常ファイル: WICヘッダから直接サイズ取得
+            IWICImagingFactory* factory = GetThreadWicFactory();
+            if (factory)
+            {
+                ComPtr<IWICBitmapDecoder> decoder;
+                if (SUCCEEDED(factory->CreateDecoderFromFilename(path.c_str(), nullptr, GENERIC_READ,
+                    WICDecodeMetadataCacheOnDemand, decoder.GetAddressOf())))
+                {
+                    ComPtr<IWICBitmapFrameDecode> frame;
+                    if (SUCCEEDED(decoder->GetFrame(0, frame.GetAddressOf())))
+                    {
+                        UINT w = 0, h = 0;
+                        if (SUCCEEDED(frame->GetSize(&w, &h)) && w > 0 && h > 0)
+                            CacheImageSize(path, w, h);
+                    }
+                }
+            }
+        }
+    }
+}
+
 void PrefetchStart(int currentIndex, int direction)
 {
     // 世代を進める（前のワーカーはそのまま走り続けるがUI通知はしない）
@@ -141,6 +212,20 @@ void PrefetchStart(int currentIndex, int direction)
 
     int total = (int)g_app.nav.viewableFiles.size();
     if (total == 0) return;
+
+    // 見開き判定用サイズ優先プリフェッチ（バックグラウンド）
+    {
+        struct SizeCtx { int idx; int dir; int gen; };
+        auto* ctx = new SizeCtx{ currentIndex, direction, gen };
+        PTP_WORK work = CreateThreadpoolWork([](PTP_CALLBACK_INSTANCE, PVOID p, PTP_WORK) {
+            auto* c = (SizeCtx*)p;
+            ComInitGuard com;
+            PrefetchSizesForSpread(c->idx, c->dir, c->gen);
+            delete c;
+        }, ctx, nullptr);
+        if (work) SubmitThreadpoolWork(work);
+        else delete ctx;
+    }
 
     // 設定値から枚数を取得
     static int cachedCount = 0;

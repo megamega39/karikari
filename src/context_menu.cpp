@@ -10,6 +10,7 @@
 #include <shellapi.h>
 #include "media.h"
 #include "viewer.h"
+#include "window.h"
 #include <wincodec.h>
 #include <wrl/client.h>
 
@@ -284,6 +285,7 @@ void ShowFileContextMenu(HWND hwnd, const std::wstring& path, POINT pt)
         if (canDelete)
         {
             AppendMenuW(hMenu, MF_SEPARATOR, 0, nullptr);
+            AppendMenuW(hMenu, MF_STRING, CTX_RENAME, I18nGet(L"ctx.rename").c_str());
             AppendMenuW(hMenu, MF_STRING, CTX_DELETE, I18nGet(L"ctx.delete").c_str());
         }
     }
@@ -415,6 +417,27 @@ void ShowFileContextMenu(HWND hwnd, const std::wstring& path, POINT pt)
         int idx = cmd - CTX_SHELF_BASE;
         BookshelfAddItem(cats[idx].id, fileName, path);
         if (GetTreeMode() == 1) ShowBookshelfTree();
+    }
+    else if (cmd == CTX_RENAME)
+    {
+        // どこから呼ばれたか判定: ファイルリスト or ツリービュー
+        int sel = (int)SendMessageW(g_app.wnd.hwndList, LVM_GETNEXTITEM, (WPARAM)-1, LVNI_SELECTED);
+        bool fromList = (sel >= 0 && sel < (int)g_app.nav.fileItems.size()
+            && _wcsicmp(g_app.nav.fileItems[sel].fullPath.c_str(), path.c_str()) == 0);
+
+        if (fromList && !g_app.nav.inArchiveMode)
+        {
+            StartInlineRename(sel);
+        }
+        else
+        {
+            // ツリービューのインラインラベル編集（右クリックしたノードを直接編集）
+            HTREEITEM hTarget = g_treeRClickItem;
+            if (!hTarget)
+                hTarget = (HTREEITEM)SendMessageW(g_app.wnd.hwndTree, TVM_GETNEXTITEM, TVGN_CARET, 0);
+            if (hTarget)
+                SendMessageW(g_app.wnd.hwndTree, TVM_EDITLABEL, 0, (LPARAM)hTarget);
+        }
     }
     else if (cmd == CTX_DELETE)
     {

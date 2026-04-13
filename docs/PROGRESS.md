@@ -272,3 +272,13 @@
   - WM_CREATE内のフォント統一処理をApplyFontSize()呼び出しに置換
   - settings.cpp のOKハンドラからCreateProcessW/ExitProcess（自動再起動）を完全削除
 - **設計判断**: 再起動は不要な変更にまでCreateProcess/ExitProcessを使っていたのを解消。フォントはグローバル変数で管理し、初回起動時と設定変更時の両方で使用
+
+## 2026-04-13: キーバインドシステム実装（HandleKeyDown テーブル駆動化）
+- **変更内容**: HandleKeyDown のハードコードされたキー判定を、キーバインドテーブル参照方式に全面書き換え
+- **変更ファイル**: settings.h, settings.cpp, command.cpp
+- **実装詳細**:
+  - `FindAction()` 関数追加（settings.h/cpp）: キーバインドテーブルを検索しアクション名を返す
+  - `ExecuteAction()` 関数追加（command.cpp）: アクション名に基づいてコマンドを実行するディスパッチャ
+  - `HandleKeyDown()` を全面書き換え: テキスト入力チェック後、FindAction→ExecuteActionの2段構成に簡素化
+  - InitDefaultKeyBindings に9個の新アクション追加: bookshelf, history, list_view, grid_view, hover_preview, settings, view_cycle, bind_ltr, bind_rtl
+- **設計判断**: キーバインドをテーブル駆動にすることで、設定画面でのカスタマイズが実際に反映されるようになった。従来はInitDefaultKeyBindingsでテーブルを定義していたが、HandleKeyDownがハードコードのままだったため設定変更が無視されていた

@@ -24,6 +24,7 @@
 #include "i18n.h"
 #include "fswatcher.h"
 #include <shlwapi.h>
+#include <shlobj.h>
 #include <shellapi.h>
 #include <uxtheme.h>
 #include "stream_cache.h"
@@ -42,8 +43,9 @@ int g_restoreIndex = -1;
 // ツリー選択デバウンス用
 static constexpr UINT_PTR kTreeNavTimer = 98;
 static std::wstring g_pendingTreePath;
+HTREEITEM g_treeRClickItem = nullptr; // 右クリックしたツリーアイテム
 
-static constexpr int kNavBarH_96 = 48;
+static constexpr int kNavBarH_96 = 52;
 static constexpr int kAddrBarH_96 = 28;
 static constexpr int kSplitterW_96 = 6;
 static constexpr int kViewerToolbarH_96 = 36;
@@ -72,6 +74,31 @@ void ApplyFontSize(int fontSize)
     set(g_app.wnd.hwndHistoryToolbar, g_uiFont);
     set(g_app.wnd.hwndFolderLabel, g_uiFont);
     set(g_app.wnd.hwndBookshelfToolbar, g_uiFont);
+    set(g_app.wnd.hwndTreeSortBtn, g_uiFont);
+    set(g_app.wnd.hwndBookshelfSortBtn, g_uiFont);
+}
+
+void UpdateSortButtonLabels()
+{
+    TreeSortMode mode = GetTreeSortMode();
+    bool desc = GetTreeSortDescending();
+    const wchar_t* arrow = desc ? L" \u25BC" : L" \u25B2"; // ▼ ▲
+    const wchar_t* names[] = { L"Name", L"Date", L"Size", L"Type" };
+    // i18nキーで名前取得
+    const wchar_t* keys[] = { L"list.name", L"list.date", L"list.type", L"list.type" };
+    std::wstring label;
+    switch (mode) {
+    case SortByName: label = I18nGet(L"list.name"); break;
+    case SortByDate: label = I18nGet(L"list.date"); break;
+    case SortBySize: label = I18nGet(L"list.size"); break;
+    case SortByType: label = I18nGet(L"list.type"); break;
+    }
+    label += arrow;
+
+    if (g_app.wnd.hwndTreeSortBtn)
+        SetWindowTextW(g_app.wnd.hwndTreeSortBtn, label.c_str());
+    if (g_app.wnd.hwndBookshelfSortBtn)
+        SetWindowTextW(g_app.wnd.hwndBookshelfSortBtn, label.c_str());
 }
 
 void RebuildUI()
@@ -102,6 +129,9 @@ void RebuildUI()
         lvc.pszText = (LPWSTR)I18nGet(L"list.date").c_str();
         SendMessageW(g_app.wnd.hwndList, LVM_SETCOLUMNW, 3, (LPARAM)&lvc);
     }
+
+    // ソートボタンラベル更新
+    UpdateSortButtonLabels();
 
     // ファイルリスト再描画（種類テキスト等の更新）
     PopulateListView();
@@ -220,19 +250,21 @@ void LayoutChildren(HWND hwndParent)
     int listH = mainH - listY;
 
     {
-        int sortBtnW = 24;
+        int sortBtnW = 80;
+        int sortBtnH = 22;
+        int sortBtnPad = (headerH - sortBtnH) / 2; // 垂直中央
         if (!shelfMode)
         {
             if (g_app.wnd.hwndFolderLabel)
                 MoveWindow(g_app.wnd.hwndFolderLabel, 0, mainY, leftW - sortBtnW, headerH, TRUE);
             if (g_app.wnd.hwndTreeSortBtn)
-                MoveWindow(g_app.wnd.hwndTreeSortBtn, leftW - sortBtnW, mainY, sortBtnW, headerH, TRUE);
+                MoveWindow(g_app.wnd.hwndTreeSortBtn, leftW - sortBtnW, mainY + sortBtnPad, sortBtnW, sortBtnH, TRUE);
         }
         else
         {
             MoveWindow(g_app.wnd.hwndBookshelfToolbar, 0, mainY, leftW, headerH, TRUE);
             if (g_app.wnd.hwndBookshelfSortBtn)
-                MoveWindow(g_app.wnd.hwndBookshelfSortBtn, leftW - 24, 3, 24, 22, TRUE);
+                MoveWindow(g_app.wnd.hwndBookshelfSortBtn, leftW - sortBtnW, sortBtnPad, sortBtnW, sortBtnH, TRUE);
         }
     }
 
@@ -500,25 +532,36 @@ static void HandleNotify(HWND hwnd, LPNMHDR pnm)
     }
 
     // ナビバー ツールチップ
+    // ツールチップ共通ヘルパー: アクション名からショートカットキー文字列を取得
+    auto TipWithKey = [](const std::wstring& label, const wchar_t* actionName) -> std::wstring {
+        for (auto& kb : GetKeyBindings()) {
+            if (kb.action == actionName && !kb.keys.empty()) {
+                return label + L" (" + KeyBindingToString(kb) + L")";
+            }
+        }
+        return label;
+    };
+
     if (pnm->hwndFrom == g_app.wnd.hwndNavBar && pnm->code == TBN_GETINFOTIPW)
     {
         auto* tip = (LPNMTBGETINFOTIPW)pnm;
-        const wchar_t* text = nullptr;
+        std::wstring s;
         switch (tip->iItem)
         {
-        case IDM_NAV_BACK:      { static std::wstring s; s = I18nGet(L"nav.back") + L" (Alt+\u2190)"; text = s.c_str(); } break;
-        case IDM_NAV_FORWARD:   { static std::wstring s; s = I18nGet(L"nav.forward") + L" (Alt+\u2192)"; text = s.c_str(); } break;
-        case IDM_NAV_UP:        { static std::wstring s; s = I18nGet(L"nav.up") + L" (Alt+\u2191)"; text = s.c_str(); } break;
-        case IDM_NAV_REFRESH:   { static std::wstring s; s = I18nGet(L"nav.refresh") + L" (F5)"; text = s.c_str(); } break;
-        case IDM_NAV_BOOKSHELF: text = I18nGet(L"ui.bookshelf").c_str(); break;
-        case IDM_NAV_HISTORY:   text = I18nGet(L"ui.history").c_str(); break;
-        case IDM_NAV_LIST:      text = I18nGet(L"nav.list").c_str(); break;
-        case IDM_NAV_GRID:      text = I18nGet(L"nav.grid").c_str(); break;
-        case IDM_NAV_SETTINGS:  text = I18nGet(L"ui.settings").c_str(); break;
-        case IDM_NAV_HELP:      { static std::wstring s; s = I18nGet(L"ui.help") + L" (F1)"; text = s.c_str(); } break;
+        case IDM_NAV_BACK:      s = TipWithKey(I18nGet(L"nav.back"), L"nav_back"); break;
+        case IDM_NAV_FORWARD:   s = TipWithKey(I18nGet(L"nav.forward"), L"nav_forward"); break;
+        case IDM_NAV_UP:        s = TipWithKey(I18nGet(L"nav.up"), L"nav_up"); break;
+        case IDM_NAV_REFRESH:   s = TipWithKey(I18nGet(L"nav.refresh"), L"refresh"); break;
+        case IDM_NAV_BOOKSHELF: s = TipWithKey(I18nGet(L"ui.bookshelf"), L"bookshelf"); break;
+        case IDM_NAV_HISTORY:   s = TipWithKey(I18nGet(L"ui.history"), L"history"); break;
+        case IDM_NAV_LIST:      s = TipWithKey(I18nGet(L"nav.list"), L"list_view"); break;
+        case IDM_NAV_GRID:      s = TipWithKey(I18nGet(L"nav.grid"), L"grid_view"); break;
+        case IDM_NAV_HOVER:     s = TipWithKey(I18nGet(L"nav.hover"), L"hover_preview"); break;
+        case IDM_NAV_SETTINGS:  s = TipWithKey(I18nGet(L"ui.settings"), L"settings"); break;
+        case IDM_NAV_HELP:      s = TipWithKey(I18nGet(L"ui.help"), L"help"); break;
         }
-        if (text && tip->pszText && tip->cchTextMax > 0)
-            wcsncpy_s(tip->pszText, tip->cchTextMax, text, _TRUNCATE);
+        if (!s.empty() && tip->pszText && tip->cchTextMax > 0)
+            wcsncpy_s(tip->pszText, tip->cchTextMax, s.c_str(), _TRUNCATE);
         return;
     }
 
@@ -526,22 +569,27 @@ static void HandleNotify(HWND hwnd, LPNMHDR pnm)
     if ((pnm->hwndFrom == g_app.wnd.hwndViewerTbLeft || pnm->hwndFrom == g_app.wnd.hwndViewerTbRight) && pnm->code == TBN_GETINFOTIPW)
     {
         auto* tip = (LPNMTBGETINFOTIPW)pnm;
-        const wchar_t* text = nullptr;
-        switch (tip->iItem) // iItem = コマンドID
+        std::wstring s;
+        switch (tip->iItem)
         {
-        case IDM_VIEW_FIT_WINDOW: text = L"ウィンドウに合わせる (W)"; break;
-        case IDM_VIEW_FIT_WIDTH:  text = L"幅に合わせる"; break;
-        case IDM_VIEW_FIT_HEIGHT: text = L"高さに合わせる"; break;
-        case IDM_VIEW_ORIGINAL:   text = L"等倍 (1:1)"; break;
-        case IDM_VIEW_ZOOMIN:     text = L"拡大 (+25%)"; break;
-        case IDM_VIEW_ZOOMOUT:    text = L"縮小 (-25%)"; break;
-        case IDM_VIEW_AUTO:       text = L"自動判定 (3)"; break;
-        case IDM_VIEW_SINGLE:     text = L"単ページ (1)"; break;
-        case IDM_VIEW_SPREAD:     text = L"見開き (2)"; break;
-        case IDM_VIEW_BINDING:    text = L"綴じ方向 (B)"; break;
+        case IDM_VIEW_FIRST:      s = TipWithKey(L"最初のページ", L"first_page"); break;
+        case IDM_VIEW_PREV:       s = TipWithKey(L"前のページ", L"prev_page"); break;
+        case IDM_VIEW_NEXT:       s = TipWithKey(L"次のページ", L"next_page"); break;
+        case IDM_VIEW_LAST:       s = TipWithKey(L"最後のページ", L"last_page"); break;
+        case IDM_VIEW_FIT_WINDOW: s = TipWithKey(I18nGet(L"kb.fit_window"), L"fit_window"); break;
+        case IDM_VIEW_FIT_WIDTH:  s = TipWithKey(I18nGet(L"kb.fit_width"), L"fit_width"); break;
+        case IDM_VIEW_FIT_HEIGHT: s = TipWithKey(I18nGet(L"kb.fit_height"), L"fit_height"); break;
+        case IDM_VIEW_ORIGINAL:   s = TipWithKey(I18nGet(L"kb.original"), L"original_size"); break;
+        case IDM_VIEW_ZOOMIN:     s = TipWithKey(I18nGet(L"kb.zoom_in"), L"zoom_in"); break;
+        case IDM_VIEW_ZOOMOUT:    s = TipWithKey(I18nGet(L"kb.zoom_out"), L"zoom_out"); break;
+        case IDM_VIEW_AUTO:       s = TipWithKey(I18nGet(L"kb.view_auto"), L"view_auto"); break;
+        case IDM_VIEW_SINGLE:     s = TipWithKey(I18nGet(L"kb.view_single"), L"view_single"); break;
+        case IDM_VIEW_SPREAD:     s = TipWithKey(I18nGet(L"kb.view_spread"), L"view_spread"); break;
+        case IDM_VIEW_BINDING:    s = TipWithKey(I18nGet(L"kb.binding"), L"toggle_binding"); break;
+        case IDM_VIEW_ROTATE_CW:  s = TipWithKey(I18nGet(L"kb.rotate"), L"rotate_cw"); break;
         }
-        if (text)
-            wcsncpy_s(tip->pszText, tip->cchTextMax, text, _TRUNCATE);
+        if (!s.empty())
+            wcsncpy_s(tip->pszText, tip->cchTextMax, s.c_str(), _TRUNCATE);
         return;
     }
     if (pnm->hwndFrom == g_app.wnd.hwndNavBar)
@@ -710,6 +758,7 @@ static void HandleNotify(HWND hwnd, LPNMHDR pnm)
             ScreenToClient(g_app.wnd.hwndTree, &clientPt);
             TVHITTESTINFO ht = {}; ht.pt = clientPt;
             HTREEITEM hItem = (HTREEITEM)SendMessageW(g_app.wnd.hwndTree, TVM_HITTEST, 0, (LPARAM)&ht);
+            g_treeRClickItem = hItem; // 右クリックしたアイテムを記憶
             if (hItem)
             {
                 std::wstring treePath = GetTreeItemPath(hItem);
@@ -735,8 +784,8 @@ static void HandleNotify(HWND hwnd, LPNMHDR pnm)
                     }
                     else if (cmd == 2)
                     {
-                        // インラインラベル編集を開始
-                        SendMessageW(g_app.wnd.hwndTree, TVM_EDITLABEL, 0, (LPARAM)hItem);
+                        // インラインラベル編集を開始（右クリックしたノードを直接編集）
+                        SendMessageW(g_app.wnd.hwndTree, TVM_EDITLABEL, 0, (LPARAM)g_treeRClickItem);
                     }
                 }
                 else if (GetTreeMode() == 1 && treePath == L"BOOKSHELF_ROOT")
@@ -751,13 +800,74 @@ static void HandleNotify(HWND hwnd, LPNMHDR pnm)
         }
         else if (pnm->code == TVN_BEGINLABELEDITW)
         {
-            // 本棚モードのCAT:ノードのみ編集許可
             auto pdi = (LPNMTVDISPINFOW)pnm;
             std::wstring tag = GetTreeItemPath(pdi->item.hItem);
+            // 本棚カテゴリ: 編集許可
             if (GetTreeMode() == 1 && tag.size() > 4 && tag.substr(0, 4) == L"CAT:")
-                SetWindowLongPtrW(hwnd, DWLP_MSGRESULT, FALSE); // 編集許可
+            {
+                SetWindowLongPtrW(hwnd, DWLP_MSGRESULT, FALSE);
+            }
+            // 本棚ITEM:ノード: 実ファイル/フォルダのリネーム許可
+            else if (GetTreeMode() == 1 && tag.size() > 5 && tag.substr(0, 5) == L"ITEM:")
+            {
+                std::wstring realPath = tag.substr(5);
+                if (!PathIsRootW(realPath.c_str()))
+                {
+                    SetWindowLongPtrW(hwnd, DWLP_MSGRESULT, FALSE);
+                    HWND hEdit = (HWND)SendMessageW(g_app.wnd.hwndTree, TVM_GETEDITCONTROL, 0, 0);
+                    if (hEdit)
+                    {
+                        std::wstring name = realPath;
+                        auto sl = name.find_last_of(L'\\');
+                        if (sl != std::wstring::npos) name = name.substr(sl + 1);
+                        auto dot = name.find_last_of(L'.');
+                        if (dot != std::wstring::npos)
+                            PostMessageW(hEdit, EM_SETSEL, 0, (LPARAM)dot);
+                    }
+                }
+                else
+                    SetWindowLongPtrW(hwnd, DWLP_MSGRESULT, TRUE);
+            }
+            // 通常ファイル/フォルダ: 特殊フォルダ・ドライブ以外は編集許可
+            else if (!tag.empty() && !PathIsRootW(tag.c_str()) && tag != L"BOOKSHELF_ROOT"
+                && !(tag.size() > 4 && tag.substr(0, 4) == L"CAT:"))
+            {
+                // 特殊フォルダチェック
+                bool isSpecial = false;
+                static const KNOWNFOLDERID specialFolders[] = {
+                    FOLDERID_Desktop, FOLDERID_Downloads, FOLDERID_Documents,
+                    FOLDERID_Pictures, FOLDERID_Videos, FOLDERID_Music
+                };
+                for (auto& fid : specialFolders)
+                {
+                    wchar_t* knownPath = nullptr;
+                    if (SUCCEEDED(SHGetKnownFolderPath(fid, 0, nullptr, &knownPath)))
+                    {
+                        if (_wcsicmp(tag.c_str(), knownPath) == 0) isSpecial = true;
+                        CoTaskMemFree(knownPath);
+                        if (isSpecial) break;
+                    }
+                }
+                SetWindowLongPtrW(hwnd, DWLP_MSGRESULT, isSpecial ? TRUE : FALSE);
+                if (!isSpecial)
+                {
+                    // 編集開始時に拡張子前まで選択
+                    HWND hEdit = (HWND)SendMessageW(g_app.wnd.hwndTree, TVM_GETEDITCONTROL, 0, 0);
+                    if (hEdit)
+                    {
+                        std::wstring name = tag;
+                        auto sl = name.find_last_of(L'\\');
+                        if (sl != std::wstring::npos) name = name.substr(sl + 1);
+                        auto dot = name.find_last_of(L'.');
+                        if (dot != std::wstring::npos)
+                            PostMessageW(hEdit, EM_SETSEL, 0, (LPARAM)dot);
+                    }
+                }
+            }
             else
+            {
                 SetWindowLongPtrW(hwnd, DWLP_MSGRESULT, TRUE); // 編集拒否
+            }
         }
         else if (pnm->code == TVN_ENDLABELEDITW)
         {
@@ -765,11 +875,100 @@ static void HandleNotify(HWND hwnd, LPNMHDR pnm)
             if (pdi->item.pszText && pdi->item.pszText[0] != L'\0')
             {
                 std::wstring tag = GetTreeItemPath(pdi->item.hItem);
+                // 本棚カテゴリのリネーム
                 if (tag.size() > 4 && tag.substr(0, 4) == L"CAT:")
                 {
                     std::wstring catId = tag.substr(4);
                     BookshelfRenameCategory(catId, pdi->item.pszText);
-                    SetWindowLongPtrW(hwnd, DWLP_MSGRESULT, TRUE); // 変更を反映
+                    SetWindowLongPtrW(hwnd, DWLP_MSGRESULT, TRUE);
+                }
+                // 本棚ITEM:ノードのリネーム（実ファイル/フォルダ）
+                else if (tag.size() > 5 && tag.substr(0, 5) == L"ITEM:")
+                {
+                    std::wstring realPath = tag.substr(5);
+                    std::wstring parentDir = realPath;
+                    auto lastSlash = parentDir.find_last_of(L'\\');
+                    if (lastSlash != std::wstring::npos)
+                        parentDir = parentDir.substr(0, lastSlash + 1);
+                    std::wstring newPath = parentDir + pdi->item.pszText;
+
+                    // 書庫ファイルのロック解放
+                    if (IsArchiveFile(realPath))
+                        CloseCurrentArchive();
+                    if (_wcsicmp(realPath.c_str(), g_app.nav.currentPath.c_str()) == 0)
+                    {
+                        ViewerStopAnimation();
+                        g_app.viewer.bitmap.Reset();
+                        g_app.viewer.bitmap2.Reset();
+                        MediaStop();
+                    }
+
+                    if (MoveFileW(realPath.c_str(), newPath.c_str()))
+                    {
+                        // ツリーのlParamを新パスに更新
+                        std::wstring newTag = L"ITEM:" + newPath;
+                        wchar_t* newStr = new wchar_t[newTag.size() + 1];
+                        wcscpy_s(newStr, newTag.size() + 1, newTag.c_str());
+                        TVITEMW tvi = {};
+                        tvi.mask = TVIF_PARAM;
+                        tvi.hItem = pdi->item.hItem;
+                        SendMessageW(g_app.wnd.hwndTree, TVM_GETITEMW, 0, (LPARAM)&tvi);
+                        delete[] (wchar_t*)tvi.lParam;
+                        tvi.lParam = (LPARAM)newStr;
+                        SendMessageW(g_app.wnd.hwndTree, TVM_SETITEMW, 0, (LPARAM)&tvi);
+                        // 本棚データも更新
+                        BookshelfUpdateItemPath(realPath, newPath);
+                        SetWindowLongPtrW(hwnd, DWLP_MSGRESULT, TRUE);
+                        LoadFolder(g_app.nav.currentFolder);
+                        PopulateListView();
+                    }
+                    else
+                        SetWindowLongPtrW(hwnd, DWLP_MSGRESULT, FALSE);
+                }
+                // 通常ファイル/フォルダのリネーム
+                else if (!tag.empty() && !PathIsRootW(tag.c_str()))
+                {
+                    std::wstring parentDir = tag;
+                    auto lastSlash = parentDir.find_last_of(L'\\');
+                    if (lastSlash != std::wstring::npos)
+                        parentDir = parentDir.substr(0, lastSlash + 1);
+                    std::wstring newPath = parentDir + pdi->item.pszText;
+
+                    // 書庫ファイルのロック解放
+                    if (IsArchiveFile(tag))
+                        CloseCurrentArchive();
+                    // 表示中のファイルのロック解放
+                    if (_wcsicmp(tag.c_str(), g_app.nav.currentPath.c_str()) == 0)
+                    {
+                        ViewerStopAnimation();
+                        g_app.viewer.bitmap.Reset();
+                        g_app.viewer.bitmap2.Reset();
+                        MediaStop();
+                    }
+
+                    if (MoveFileW(tag.c_str(), newPath.c_str()))
+                    {
+                        // ツリーのlParamを新パスに更新
+                        wchar_t* newStr = new wchar_t[newPath.size() + 1];
+                        wcscpy_s(newStr, newPath.size() + 1, newPath.c_str());
+                        TVITEMW tvi = {};
+                        tvi.mask = TVIF_PARAM;
+                        tvi.hItem = pdi->item.hItem;
+                        SendMessageW(g_app.wnd.hwndTree, TVM_GETITEMW, 0, (LPARAM)&tvi);
+                        delete[] (wchar_t*)tvi.lParam;
+                        tvi.lParam = (LPARAM)newStr;
+                        SendMessageW(g_app.wnd.hwndTree, TVM_SETITEMW, 0, (LPARAM)&tvi);
+
+                        SetWindowLongPtrW(hwnd, DWLP_MSGRESULT, TRUE);
+                        // ファイルリスト・ツリー更新
+                        LoadFolder(g_app.nav.currentFolder);
+                        PopulateListView();
+                        RefreshTree();
+                    }
+                    else
+                    {
+                        SetWindowLongPtrW(hwnd, DWLP_MSGRESULT, FALSE);
+                    }
                 }
             }
         }
@@ -1001,17 +1200,14 @@ static LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
             SendMessageW(g_app.wnd.hwndFolderLabel, WM_SETFONT, (WPARAM)hLabelFont, TRUE);
         }
 
-        // ツリーソートボタン（フォルダラベル右端に配置）
+        // ツリーソートボタン（フォルダラベル右端に配置、ソート名表示）
         g_app.wnd.hwndTreeSortBtn = CreateWindowExW(
-            0, L"BUTTON", L"\uE8CB",
+            0, L"BUTTON", L"",
             WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON | BS_FLAT,
-            0, 0, 24, 20,
+            0, 0, 80, 22,
             hwnd, (HMENU)(UINT_PTR)IDM_TREE_SORT, hInst, nullptr);
-        {
-            static HFONT hSortFont = CreateFontW(-12, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
-                DEFAULT_CHARSET, 0, 0, CLEARTYPE_QUALITY, 0, L"Segoe Fluent Icons");
-            SendMessageW(g_app.wnd.hwndTreeSortBtn, WM_SETFONT, (WPARAM)hSortFont, TRUE);
-        }
+        if (g_uiFont)
+            SendMessageW(g_app.wnd.hwndTreeSortBtn, WM_SETFONT, (WPARAM)g_uiFont, TRUE);
 
         // 本棚ツールバー（本棚モード時のみ表示: アイコン+ラベル+全削除+ソート）
         {
@@ -1033,10 +1229,10 @@ static LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
                 (HMENU)(UINT_PTR)IDM_BOOKSHELF_CLEAR, hInst, nullptr);
             SendMessageW(hClear, WM_SETFONT, (WPARAM)hShelfFont, TRUE);
 
-            g_app.wnd.hwndBookshelfSortBtn = CreateWindowExW(0, L"BUTTON", L"\uE8CB",
-                WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON | BS_FLAT, 0, 0, 24, 22, g_app.wnd.hwndBookshelfToolbar,
+            g_app.wnd.hwndBookshelfSortBtn = CreateWindowExW(0, L"BUTTON", L"",
+                WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON | BS_FLAT, 0, 0, 80, 22, g_app.wnd.hwndBookshelfToolbar,
                 (HMENU)(UINT_PTR)IDM_BOOKSHELF_SORT, hInst, nullptr);
-            SendMessageW(g_app.wnd.hwndBookshelfSortBtn, WM_SETFONT, (WPARAM)(hIconFont ? hIconFont : hShelfFont), TRUE);
+            SendMessageW(g_app.wnd.hwndBookshelfSortBtn, WM_SETFONT, (WPARAM)(g_uiFont ? g_uiFont : hShelfFont), TRUE);
 
             // STATICの子ボタンのWM_COMMANDをメインウィンドウに転送
             SetWindowSubclass(g_app.wnd.hwndBookshelfToolbar, [](HWND h, UINT msg, WPARAM wp, LPARAM lp,
@@ -1083,6 +1279,9 @@ static LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
                 }
                 // VK_UP/VK_DOWN はTreeViewデフォルト動作（ツリーナビゲーション）に任せる
             }
+            // WM_CHARのビープ音を抑制（Enter等の制御文字）
+            if (msg == WM_CHAR && (wParam == L'\r' || wParam == L'\n' || wParam == L'\t' || wParam == L'\x1b'))
+                return 0;
             // ホバープレビュー: ツリー上の書庫ファイルにマウスを乗せるとプレビュー
             if (msg == WM_MOUSEMOVE && g_app.hoverPreviewEnabled)
             {
@@ -1159,6 +1358,9 @@ static LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
                 if (wParam >= '0' && wParam <= '9')
                 { SendMessageW(GetParent(hwnd), WM_KEYDOWN, wParam, lParam); return 0; }
             }
+            // WM_CHARのビープ音を抑制（Enter等の制御文字）
+            if (msg == WM_CHAR && (wParam == L'\r' || wParam == L'\n' || wParam == L'\t' || wParam == L'\x1b'))
+                return 0;
             // ホバープレビュー: マウス移動でアイテム検出
             if (msg == WM_MOUSEMOVE && g_app.hoverPreviewEnabled)
             {
@@ -1380,6 +1582,7 @@ static LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
             else if (s.treeSortMode == L"Size") mode = SortBySize;
             else if (s.treeSortMode == L"Type") mode = SortByType;
             SetTreeSortMode(mode, s.treeSortDescending);
+            UpdateSortButtonLabels();
 
             g_app.viewer.viewMode = s.viewMode;
             g_app.viewer.isRTL = s.isRTL;
@@ -1398,6 +1601,10 @@ static LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
 
     case WM_KEYDOWN:
         HandleKeyDown(hwnd, wParam);
+        return 0;
+
+    case WM_CHAR:
+        // メインウィンドウでの未処理WM_CHARのビープ音を抑制
         return 0;
 
     case WM_CTLCOLORSTATIC:
@@ -1600,6 +1807,10 @@ static LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
 
     case WM_HOVER_PREVIEW_DONE:
         HandleHoverPreviewDone(hwnd, wParam, lParam);
+        return 0;
+
+    case WM_APP + 50: // インラインリネームキャンセル（遅延処理）
+        CancelInlineRename();
         return 0;
 
     case WM_APP + 8: // WM_THUMB_DONE

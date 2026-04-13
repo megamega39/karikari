@@ -29,6 +29,7 @@ static const ViewerImgDef kViewerImages[] = {
     { L"2",      false },  // 12: Spread
     { L"\uE72A", true  },  // 13: Binding LTR (→)
     { L"\uE72B", true  },  // 14: Binding RTL (←)
+    { L"\uE7AD", true  },  // 15: Rotate CW (Rotate)
 };
 
 // 白テキスト→黒背景で描画し、輝度をアルファに変換して目標色でプリマルチプライ
@@ -79,7 +80,7 @@ static HIMAGELIST CreateViewerIconImageList(int cx, int cy)
             L"Segoe MDL2 Assets");
 
     HFONT hTextFont = CreateFontW(
-        14, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE,
+        18, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE,
         DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
         ANTIALIASED_QUALITY, DEFAULT_PITCH,
         L"Segoe UI");
@@ -192,6 +193,7 @@ void CreateViewerToolbars(HWND parent, HINSTANCE hInst)
         { 0, IDM_VIEW_ORIGINAL,    7, 0 },
         { 1, 0,                    0, 8 },
         { 0, IDM_VIEW_BINDING,    13, 0 },
+        { 0, IDM_VIEW_ROTATE_CW,  15, 0 },
         { 1, 0,                    0, 8 },
         { 0, IDM_VIEW_ZOOMIN,      8, 0 },
         { 2, 0,                    0, 60 },  // ズーム率

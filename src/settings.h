@@ -2,17 +2,17 @@
 #include "app.h"
 
 struct AppSettings {
-    RECT windowRect = { CW_USEDEFAULT, CW_USEDEFAULT, 1200, 800 };
+    RECT windowRect = { CW_USEDEFAULT, CW_USEDEFAULT, 1280, 860 };
     bool maximized = false;
-    int mainSplitPos = 300;
+    int mainSplitPos = 280;
     int sidebarSplitPos = 300;
     std::wstring lastPath;
     int lastFileIndex = -1;
     std::wstring lastImagePath;
 
     // ユーザー設定
-    int cacheSizeMB = 256;
-    int prefetchCount = 8;
+    int cacheSizeMB = 512;
+    int prefetchCount = 16;
     std::wstring language = L"ja";
     bool wrapNavigation = true;
     bool spreadFirstSingle = true;    // 見開き時最初のページを単独表示（leeyez_kai準拠）
@@ -25,7 +25,7 @@ struct AppSettings {
     std::wstring treeSortMode = L"Name";  // ツリーソート: Name/Date/Size/Type
     bool treeSortDescending = false;      // ツリーソート降順
     int viewMode = 0;                     // 0=自動, 1=単独, 2=見開き
-    bool isRTL = false;                   // 綴じ方向（右綴じ）
+    bool isRTL = true;                    // 綴じ方向（右綴じ＝日本漫画方式）
     int scaleMode = 0;                    // 0=FitWindow, 1=FitWidth, 2=FitHeight, 3=Original
     std::vector<int> columnOrder;         // ファイルリスト列順序（空=デフォルト）
     std::vector<int> columnWidths;        // ファイルリスト列幅（空=デフォルト）
@@ -52,6 +52,7 @@ void LoadKeyBindings();
 void SaveKeyBindings();
 std::wstring KeyComboToString(const KeyCombo& kc);
 std::wstring KeyBindingToString(const KeyBinding& kb);
+std::wstring FindAction(UINT vk, bool ctrl, bool shift, bool alt);
 
 bool LoadSettings(AppSettings& s);
 bool SaveSettings(const AppSettings& s);

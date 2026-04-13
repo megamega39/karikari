@@ -71,6 +71,7 @@ enum ViewerCommand : UINT {
     IDM_VIEW_AUTO,
     IDM_VIEW_BINDING,
     IDM_VIEW_ZOOM_RESET,
+    IDM_VIEW_ROTATE_CW,
 };
 
 // 履歴ドロップダウンメニューID

@@ -164,6 +164,17 @@ static std::wstring GetKeyBindingsPath()
 
 std::vector<KeyBinding>& GetKeyBindings() { return g_keyBindings; }
 
+std::wstring FindAction(UINT vk, bool ctrl, bool shift, bool alt)
+{
+    for (auto& kb : GetKeyBindings()) {
+        for (auto& kc : kb.keys) {
+            if (kc.vk == vk && kc.ctrl == ctrl && kc.shift == shift && kc.alt == alt)
+                return kb.action;
+        }
+    }
+    return L"";
+}
+
 void InitDefaultKeyBindings()
 {
     g_keyBindings.clear();
@@ -187,6 +198,9 @@ void InitDefaultKeyBindings()
     Add(L"open_item",      L"開く/展開・折畳み", { K(VK_RETURN) });
     // 表示
     Add(L"fit_window",     L"ウィンドウに合わせる", { K('W') });
+    Add(L"fit_width",      L"幅に合わせる",      {});
+    Add(L"fit_height",     L"高さに合わせる",    {});
+    Add(L"original_size",  L"等倍表示",          {});
     Add(L"view_single",    L"単ページ表示",      { K('1') });
     Add(L"view_spread",    L"見開き表示",        { K('2') });
     Add(L"view_auto",      L"自動判定",          { K('3') });
@@ -208,6 +222,16 @@ void InitDefaultKeyBindings()
     Add(L"refresh",        L"更新",              { K(VK_F5) });
     Add(L"help",           L"ヘルプ",            { K(VK_F1) });
     Add(L"escape",         L"全画面解除",        { K(VK_ESCAPE) });
+    // 新規アクション
+    Add(L"bookshelf",      L"本棚切替",          { K('C') });
+    Add(L"history",        L"履歴切替",          { K('H') });
+    Add(L"list_view",      L"リスト表示",        {});
+    Add(L"grid_view",      L"グリッド表示",      { K('G') });
+    Add(L"hover_preview",  L"ホバープレビュー",  { K('P') });
+    Add(L"settings",       L"設定",              {});
+    Add(L"view_cycle",     L"表示モード切替",    { K('V') });
+    Add(L"bind_ltr",       L"左綴じ",            { K('L') });
+    Add(L"bind_rtl",       L"右綴じ",            { K('R') });
 }
 
 static std::wstring VkToString(UINT vk)
@@ -413,6 +437,7 @@ static void ShowTabPage(int tabIndex)
 static void PopulateKeyList()
 {
     if (!g_hKeyList) return;
+    int prevSel = (int)SendMessageW(g_hKeyList, LVM_GETNEXTITEM, (WPARAM)-1, LVNI_SELECTED);
     SendMessageW(g_hKeyList, LVM_DELETEALLITEMS, 0, 0);
     auto& bindings = GetKeyBindings();
     for (int i = 0; i < (int)bindings.size(); i++)
@@ -427,6 +452,12 @@ static void PopulateKeyList()
         lvi.iSubItem = 1;
         lvi.pszText = (LPWSTR)keyStr.c_str();
         SendMessageW(g_hKeyList, LVM_SETITEMTEXTW, i, (LPARAM)&lvi);
+    }
+    // 選択を復元
+    if (prevSel >= 0 && prevSel < (int)bindings.size())
+    {
+        ListView_SetItemState(g_hKeyList, prevSel, LVIS_SELECTED | LVIS_FOCUSED, LVIS_SELECTED | LVIS_FOCUSED);
+        ListView_EnsureVisible(g_hKeyList, prevSel, FALSE);
     }
 }
 
@@ -446,33 +477,46 @@ static LRESULT CALLBACK KeyCaptureProc(HWND hwnd, UINT msg, WPARAM wParam, LPARA
             kc->shift = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
             kc->alt = (GetKeyState(VK_MENU) & 0x8000) != 0;
         }
-        EndDialog(hwnd, IDOK);
+        DestroyWindow(hwnd);
         return 0;
     }
-    if (msg == WM_COMMAND && LOWORD(wParam) == IDCANCEL)
+    if (msg == WM_CLOSE)
     {
-        EndDialog(hwnd, IDCANCEL);
+        DestroyWindow(hwnd);
         return 0;
     }
+    if (msg == WM_CHAR)
+        return 0; // ビープ音抑制
     return DefWindowProcW(hwnd, msg, wParam, lParam);
 }
 
 // キーキャプチャ。成功時 true を返し kc に結果を格納。
 static bool ShowKeyCaptureDialog(HWND hParent, KeyCombo& kc)
 {
-    struct {
-        DLGTEMPLATE dt;
-        WORD menu, cls, title;
-        wchar_t titleText[32];
-    } tmpl = {};
+    // キーキャプチャ用ウィンドウクラス登録（1回のみ）
+    static bool registered = false;
+    if (!registered)
+    {
+        WNDCLASSEXW wc = {}; wc.cbSize = sizeof(wc);
+        wc.lpfnWndProc = KeyCaptureProc;
+        wc.hInstance = g_app.hInstance;
+        wc.lpszClassName = L"KarikariKeyCapture";
+        wc.hbrBackground = (HBRUSH)(COLOR_WINDOW + 1);
+        RegisterClassExW(&wc);
+        registered = true;
+    }
 
-    tmpl.dt.style = DS_MODALFRAME | DS_CENTER | WS_POPUP | WS_CAPTION | WS_SYSMENU;
-    tmpl.dt.cx = 180;
-    tmpl.dt.cy = 60;
-    wcscpy_s(tmpl.titleText, L"キー入力");
+    kc = {};
 
-    kc = {}; // 初期化
-    HWND hDlg = CreateDialogIndirectW(g_app.hInstance, &tmpl.dt, hParent, (DLGPROC)KeyCaptureProc);
+    // 親ウィンドウの中央に配置
+    RECT parentRc; GetWindowRect(hParent, &parentRc);
+    int w = 280, h = 100;
+    int x = parentRc.left + (parentRc.right - parentRc.left - w) / 2;
+    int y = parentRc.top + (parentRc.bottom - parentRc.top - h) / 2;
+
+    HWND hDlg = CreateWindowExW(WS_EX_DLGMODALFRAME, L"KarikariKeyCapture", L"キー入力",
+        WS_POPUP | WS_CAPTION | WS_SYSMENU,
+        x, y, w, h, hParent, nullptr, g_app.hInstance, nullptr);
     if (!hDlg) return false;
 
     SetWindowLongPtrW(hDlg, GWLP_USERDATA, (LONG_PTR)&kc);
@@ -480,15 +524,16 @@ static bool ShowKeyCaptureDialog(HWND hParent, KeyCombo& kc)
     HWND hLabel = CreateWindowExW(0, L"STATIC", L"新しいキーを押してください...",
         WS_CHILD | WS_VISIBLE | SS_CENTER,
         10, 15, 250, 30, hDlg, nullptr, g_app.hInstance, nullptr);
-    SendMessageW(hLabel, WM_SETFONT, (WPARAM)g_dlgFont, TRUE);
+    if (g_dlgFont) SendMessageW(hLabel, WM_SETFONT, (WPARAM)g_dlgFont, TRUE);
 
     ShowWindow(hDlg, SW_SHOW);
     EnableWindow(hParent, FALSE);
+    SetFocus(hDlg);
 
     MSG msg;
     while (IsWindow(hDlg) && GetMessageW(&msg, nullptr, 0, 0))
     {
-        if (IsDialogMessageW(hDlg, &msg)) continue;
+        // IsDialogMessageWを使わない（キー入力を食わないように）
         TranslateMessage(&msg);
         DispatchMessageW(&msg);
     }
@@ -717,7 +762,7 @@ void ShowSettingsDialog(HWND hwndParent)
     int py = parentRc.top + (parentRc.bottom - parentRc.top - DH) / 2;
 
     // ダイアログテンプレート（最小限、サイズは後でSetWindowPosで上書き）
-    struct { DLGTEMPLATE dt; WORD menu, cls, title; wchar_t titleText[8]; } tmpl = {};
+    struct { DLGTEMPLATE dt; WORD menu, cls, title; wchar_t titleText[64]; } tmpl = {};
     tmpl.dt.style = DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU;
     tmpl.dt.cx = 1; tmpl.dt.cy = 1;
     wcscpy_s(tmpl.titleText, I18nGet(L"ui.settings").c_str());

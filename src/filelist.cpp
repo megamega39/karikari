@@ -1,5 +1,6 @@
 #include "filelist.h"
 #include "archive.h"
+#include "tree.h"
 #include "media.h"
 #include "utils.h"
 #include "i18n.h"
@@ -866,6 +867,116 @@ void ApplyThumbnailSize(int size)
 {
     g_thumbSize = size;
     if (g_isGridMode) SwitchToGridView(); // グリッド再構築
+}
+
+// === インラインリネーム ===
+static HWND g_renameEdit = nullptr;
+static int g_renameIndex = -1;
+static WNDPROC g_origRenameProc = nullptr;
+
+static LRESULT CALLBACK RenameEditProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
+{
+    if (msg == WM_KEYDOWN)
+    {
+        if (wParam == VK_RETURN)
+        {
+            // 確定
+            wchar_t buf[MAX_PATH] = {};
+            GetWindowTextW(hwnd, buf, MAX_PATH);
+            std::wstring newName(buf);
+
+            if (g_renameIndex >= 0 && g_renameIndex < (int)g_app.nav.fileItems.size() && !newName.empty())
+            {
+                auto& item = g_app.nav.fileItems[g_renameIndex];
+                if (newName != item.name)
+                {
+                    std::wstring parentDir = item.fullPath;
+                    auto lastSlash = parentDir.find_last_of(L'\\');
+                    if (lastSlash != std::wstring::npos)
+                        parentDir = parentDir.substr(0, lastSlash + 1);
+                    std::wstring newPath = parentDir + newName;
+                    // 書庫/表示中ファイルのロック解放
+                    if (IsArchiveFile(item.fullPath))
+                        CloseCurrentArchive();
+
+                    if (MoveFileW(item.fullPath.c_str(), newPath.c_str()))
+                    {
+                        LoadFolder(g_app.nav.currentFolder);
+                        PopulateListView();
+                        if (GetTreeMode() == 0) RefreshTree();
+                    }
+                }
+            }
+            CancelInlineRename();
+            return 0;
+        }
+        if (wParam == VK_ESCAPE)
+        {
+            CancelInlineRename();
+            return 0;
+        }
+    }
+    if (msg == WM_KILLFOCUS)
+    {
+        // フォーカス喪失でキャンセル
+        PostMessageW(g_app.wnd.hwndMain, WM_APP + 50, 0, 0); // 遅延でDestroy
+        return 0;
+    }
+    if (msg == WM_CHAR && (wParam == L'\r' || wParam == L'\n'))
+        return 0; // ビープ音抑制
+    return CallWindowProcW(g_origRenameProc, hwnd, msg, wParam, lParam);
+}
+
+void StartInlineRename(int index)
+{
+    CancelInlineRename();
+    HWND hwndList = g_app.wnd.hwndList;
+    if (!hwndList || index < 0 || index >= (int)g_app.nav.fileItems.size()) return;
+    if (g_app.nav.inArchiveMode) return;
+
+    // アイテムの矩形を取得（テキスト部分）
+    RECT rc = {};
+    rc.left = LVIR_LABEL;
+    if (!SendMessageW(hwndList, LVM_GETITEMRECT, (WPARAM)index, (LPARAM)&rc)) return;
+
+    auto& item = g_app.nav.fileItems[index];
+
+    // Editコントロール作成（ListView上にオーバーレイ）
+    g_renameEdit = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", item.name.c_str(),
+        WS_CHILD | WS_VISIBLE | ES_AUTOHSCROLL,
+        rc.left, rc.top, rc.right - rc.left, rc.bottom - rc.top,
+        hwndList, nullptr, g_app.hInstance, nullptr);
+    if (!g_renameEdit) return;
+
+    g_renameIndex = index;
+
+    // フォント設定
+    extern HFONT g_uiFont;
+    if (g_uiFont) SendMessageW(g_renameEdit, WM_SETFONT, (WPARAM)g_uiFont, TRUE);
+
+    // 拡張子前まで選択
+    auto dotPos = item.name.find_last_of(L'.');
+    if (dotPos != std::wstring::npos && !item.isDirectory)
+        SendMessageW(g_renameEdit, EM_SETSEL, 0, (LPARAM)dotPos);
+    else
+        SendMessageW(g_renameEdit, EM_SETSEL, 0, -1);
+
+    // サブクラス化
+    g_origRenameProc = (WNDPROC)SetWindowLongPtrW(g_renameEdit, GWLP_WNDPROC, (LONG_PTR)RenameEditProc);
+
+    SetFocus(g_renameEdit);
+}
+
+void CancelInlineRename()
+{
+    if (g_renameEdit)
+    {
+        DestroyWindow(g_renameEdit);
+        g_renameEdit = nullptr;
+    }
+    g_renameIndex = -1;
+    g_origRenameProc = nullptr;
+    if (g_app.wnd.hwndList) SetFocus(g_app.wnd.hwndList);
 }
 
 int GetThumbnailIndex(int fileItemIndex)

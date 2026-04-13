@@ -1512,9 +1512,9 @@ bool ShouldShowSpread(int index)
     // 両方のサイズが判明して両方縦向き → 見開き（キャッシュに記録）
     if (size1Known && size2Known) { std::lock_guard<std::mutex> lk(g_spreadCacheMutex); g_spreadCache[index] = true; return true; }
 
-    // サイズ不明あり → 見開きを試行するがキャッシュには入れない
-    // （非同期デコード後にサイズが判明したら再判定される）
-    return true;
+    // サイズ不明あり → 単独表示（安全側）。キャッシュには入れない
+    // （プリフェッチでサイズが判明したら次回再判定される）
+    return false;
 }
 
 int GetPagesPerView()

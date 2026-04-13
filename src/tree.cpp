@@ -338,7 +338,7 @@ void InitFolderTree()
         tvis.hParent = TVI_ROOT;
         tvis.hInsertAfter = TVI_FIRST;
         tvis.item.mask = TVIF_TEXT | TVIF_PARAM | TVIF_CHILDREN | TVIF_IMAGE | TVIF_SELECTEDIMAGE;
-        tvis.item.pszText = (LPWSTR)L"お気に入り";
+        tvis.item.pszText = (LPWSTR)I18nGet(L"nav.favorites").c_str();
         tvis.item.lParam = (LPARAM)AllocPathStr(L"");
         tvis.item.cChildren = 1;
         tvis.item.iImage = favIcon;
