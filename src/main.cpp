@@ -6,6 +6,7 @@
 #include "history.h"
 #include "nav.h"
 #include "cache.h"
+#include "stream_cache.h"
 #include "prefetch.h"
 #include "media.h"
 #include "favorites.h"
@@ -90,6 +91,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int nCmdShow)
     HistorySave();
     NavHistorySave();
     CacheClear();
+    StreamCacheClear();
     CloseArchive();
     // bitmap/deviceContext は WM_DESTROY で解放済み。残りのリソースをここで解放
     g_app.viewer.wicFactory.Reset();

@@ -231,7 +231,10 @@ void LayoutChildren(HWND hwndParent)
         {
             if (g_app.wnd.hwndMediaPlayer) ShowWindow(g_app.wnd.hwndMediaPlayer, SW_HIDE);
             if (g_app.wnd.hwndViewer)
+            {
+                ShowWindow(g_app.wnd.hwndViewer, SW_SHOW);
                 MoveWindow(g_app.wnd.hwndViewer, 0, 0, clientW, clientH, TRUE);
+            }
         }
         return;
     }
@@ -1228,6 +1231,7 @@ void ToggleFullscreen(HWND hwnd)
         {
             // 本棚モード
             if (g_app.wnd.hwndBookshelfToolbar) ShowWindow(g_app.wnd.hwndBookshelfToolbar, SW_SHOW);
+            if (g_app.wnd.hwndBookshelfSortBtn) ShowWindow(g_app.wnd.hwndBookshelfSortBtn, SW_SHOW);
             if (g_app.wnd.hwndTree) ShowWindow(g_app.wnd.hwndTree, SW_SHOW);
         }
         else if (GetTreeMode() == 2)

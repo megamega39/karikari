@@ -12,13 +12,13 @@ struct StreamCacheEntry {
 static std::list<StreamCacheEntry> g_lruList;
 static std::unordered_map<std::wstring, std::list<StreamCacheEntry>::iterator> g_cacheMap;
 static size_t g_totalBytes = 0;
-// 物理メモリベースの動的上限（メモリの1/6、100MB-1GB範囲）
+// 物理メモリベースの動的上限（メモリの1/10、100MB-400MB範囲）
 static size_t CalcMaxStreamCacheBytes() {
     MEMORYSTATUSEX ms = {}; ms.dwLength = sizeof(ms);
     if (GlobalMemoryStatusEx(&ms)) {
-        size_t limit = (size_t)(ms.ullTotalPhys / 6);
+        size_t limit = (size_t)(ms.ullTotalPhys / 10);
         if (limit < 100ULL * 1024 * 1024) limit = 100ULL * 1024 * 1024;
-        if (limit > 1024ULL * 1024 * 1024) limit = 1024ULL * 1024 * 1024;
+        if (limit > 400ULL * 1024 * 1024) limit = 400ULL * 1024 * 1024;
         return limit;
     }
     return 200ULL * 1024 * 1024;
