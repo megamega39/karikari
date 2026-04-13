@@ -234,18 +234,22 @@ static void PaintSpread(ID2D1DeviceContext* rt)
     float maxDrawH = std::max(drawLH, drawRH);
     float baseY = (rtSize.height - maxDrawH) / 2.0f + g_app.viewer.scrollY;
 
+    // 補間モード（スケールベースで切替、PaintSingleと統一）
+    float maxScale = std::max(drawLW / leftSize.width, drawRW / rightSize.width);
+    auto interpMode = (maxScale > 2.0f)
+        ? D2D1_INTERPOLATION_MODE_NEAREST_NEIGHBOR
+        : D2D1_INTERPOLATION_MODE_HIGH_QUALITY_CUBIC;
+
     // 左ページ
     float ly = baseY + (maxDrawH - drawLH) / 2.0f;
     D2D1_RECT_F leftRect = D2D1::RectF(startX, ly, startX + drawLW, ly + drawLH);
-    rt->DrawBitmap(leftBmp, &leftRect, 1.0f,
-        D2D1_INTERPOLATION_MODE_HIGH_QUALITY_CUBIC, nullptr);
+    rt->DrawBitmap(leftBmp, &leftRect, 1.0f, interpMode, nullptr);
 
     // 右ページ
     float rx = startX + drawLW;
     float ry = baseY + (maxDrawH - drawRH) / 2.0f;
     D2D1_RECT_F rightRect = D2D1::RectF(rx, ry, rx + drawRW, ry + drawRH);
-    rt->DrawBitmap(rightBmp, &rightRect, 1.0f,
-        D2D1_INTERPOLATION_MODE_HIGH_QUALITY_CUBIC, nullptr);
+    rt->DrawBitmap(rightBmp, &rightRect, 1.0f, interpMode, nullptr);
 }
 
 static void OnViewerPaint(HWND hwnd)

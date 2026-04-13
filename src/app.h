@@ -212,6 +212,7 @@ struct NavState {
 struct NavigateOptions {
     bool updateHistory = true;
     bool syncTreeSelection = true;
+    bool rebuildTree = true;
 };
 
 struct AppState {

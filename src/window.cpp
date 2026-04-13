@@ -44,6 +44,7 @@ int g_restoreIndex = -1;
 static constexpr UINT_PTR kTreeNavTimer = 98;
 static std::wstring g_pendingTreePath;
 HTREEITEM g_treeRClickItem = nullptr; // 右クリックしたツリーアイテム
+bool g_treeEditAllowed = false; // プログラムからのラベル編集のみ許可
 
 static constexpr int kNavBarH_96 = 52;
 static constexpr int kAddrBarH_96 = 28;
@@ -852,6 +853,7 @@ static void HandleNotify(HWND hwnd, LPNMHDR pnm)
                     else if (cmd == 2)
                     {
                         // インラインラベル編集を開始（右クリックしたノードを直接編集）
+                        g_treeEditAllowed = true;
                         SendMessageW(g_app.wnd.hwndTree, TVM_EDITLABEL, 0, (LPARAM)g_treeRClickItem);
                     }
                 }
@@ -867,6 +869,13 @@ static void HandleNotify(HWND hwnd, LPNMHDR pnm)
         }
         else if (pnm->code == TVN_BEGINLABELEDITW)
         {
+            // プログラムから明示的に開始した場合のみ許可（ダブルクリック/スロークリック編集を防止）
+            if (!g_treeEditAllowed)
+            {
+                SetWindowLongPtrW(hwnd, DWLP_MSGRESULT, TRUE); // 編集拒否
+                return;
+            }
+            g_treeEditAllowed = false;
             auto pdi = (LPNMTVDISPINFOW)pnm;
             std::wstring tag = GetTreeItemPath(pdi->item.hItem);
             // 本棚カテゴリ: 編集許可
@@ -1413,8 +1422,11 @@ static LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
             {
                 switch (wParam)
                 {
-                case VK_LEFT: case VK_RIGHT:
                 case VK_UP: case VK_DOWN:
+                    // 上下キーはツリーにフォーカスを移す（ツリーの表示順で移動）
+                    SetFocus(g_app.wnd.hwndTree);
+                    return 0;
+                case VK_LEFT: case VK_RIGHT:
                 case VK_HOME: case VK_END:
                 case VK_RETURN:
                 case VK_F2: case VK_F5: case VK_F11: case VK_F1:

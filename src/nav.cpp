@@ -238,7 +238,7 @@ void NavigateTo(const std::wstring& path, NavigateOptions opts)
         g_app.nav.currentFileIndex = -1;
         InvalidateRect(g_app.wnd.hwndViewer, nullptr, FALSE);
 
-        if (GetTreeMode() == 0)
+        if (opts.rebuildTree && GetTreeMode() == 0)
             ShowNormalTree(); // 通常モード時のみ（本棚/履歴モードはそのまま）
         LoadFolder(path);
         PopulateListView();
@@ -252,6 +252,14 @@ void NavigateTo(const std::wstring& path, NavigateOptions opts)
     else if (IsArchiveFile(path))
     {
         // 書庫ファイル → 書庫内エントリを非同期で読み込み
+        // メディアモードの解除（全画面時の表示崩れ防止）
+        if (g_app.nav.isMediaMode)
+        {
+            MediaStop();
+            g_app.nav.isMediaMode = false;
+            LayoutChildren(g_app.wnd.hwndMain);
+        }
+
         if (opts.updateHistory)
         {
             if (g_app.nav.inArchiveMode && !g_app.nav.currentArchive.empty())
@@ -692,54 +700,131 @@ void NavResetSettings()
     InvalidateSettingsCache();
 }
 
+// ツリーソート設定に従ってファイルアイテムをソートするヘルパー
+struct NavSortItem {
+    std::wstring fullPath;
+    std::wstring name;
+    bool isDir;
+    FILETIME lastWrite;
+    ULONGLONG size;
+};
+
+static void SortNavItems(std::vector<NavSortItem>& items)
+{
+    TreeSortMode mode = GetTreeSortMode();
+    bool desc = GetTreeSortDescending();
+
+    std::sort(items.begin(), items.end(), [mode, desc](const NavSortItem& a, const NavSortItem& b) {
+        // フォルダ優先（名前・種類ソート時）
+        if (mode == SortByName || mode == SortByType)
+        {
+            if (a.isDir != b.isDir) return a.isDir > b.isDir;
+        }
+        int cmp = 0;
+        switch (mode)
+        {
+        case SortByName:
+            cmp = _wcsicmp(a.name.c_str(), b.name.c_str());
+            break;
+        case SortByDate:
+            cmp = CompareFileTime(&a.lastWrite, &b.lastWrite);
+            break;
+        case SortBySize:
+            if (a.size < b.size) cmp = -1;
+            else if (a.size > b.size) cmp = 1;
+            break;
+        case SortByType:
+        {
+            const wchar_t* extA = PathFindExtensionW(a.name.c_str());
+            const wchar_t* extB = PathFindExtensionW(b.name.c_str());
+            cmp = _wcsicmp(extA, extB);
+            if (cmp == 0) cmp = _wcsicmp(a.name.c_str(), b.name.c_str());
+            break;
+        }
+        }
+        return desc ? cmp > 0 : cmp < 0;
+    });
+}
+
+// 親フォルダ内のアイテムを列挙してNavSortItemベクターに格納
+static bool EnumParentItems(const wchar_t* parentDir, std::vector<NavSortItem>& items, bool archivesOnly)
+{
+    std::wstring search = std::wstring(parentDir) + L"\\*";
+    WIN32_FIND_DATAW fd;
+    HANDLE hFind = FindFirstFileExW(search.c_str(), FindExInfoBasic, &fd,
+                                     FindExSearchNameMatch, nullptr, FIND_FIRST_EX_LARGE_FETCH);
+    if (hFind == INVALID_HANDLE_VALUE) return false;
+
+    do
+    {
+        if (wcscmp(fd.cFileName, L".") == 0 || wcscmp(fd.cFileName, L"..") == 0) continue;
+        if (fd.dwFileAttributes & (FILE_ATTRIBUTE_HIDDEN | FILE_ATTRIBUTE_SYSTEM)) continue;
+        bool isDir = (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
+        bool isArc = !isDir && IsArchiveFile(fd.cFileName);
+
+        if (archivesOnly) { if (!isArc) continue; }
+        else { if (!isDir && !isArc) continue; }
+
+        NavSortItem item;
+        item.fullPath = std::wstring(parentDir) + L"\\" + fd.cFileName;
+        item.name = fd.cFileName;
+        item.isDir = isDir;
+        item.lastWrite = fd.ftLastWriteTime;
+        item.size = ((ULONGLONG)fd.nFileSizeHigh << 32) | fd.nFileSizeLow;
+        items.push_back(std::move(item));
+    } while (FindNextFileW(hFind, &fd));
+    FindClose(hFind);
+    return !items.empty();
+}
+
+static int FindCurrentIndex(const std::vector<NavSortItem>& items, const std::wstring& currentPath)
+{
+    for (int i = 0; i < (int)items.size(); i++)
+        if (_wcsicmp(items[i].fullPath.c_str(), currentPath.c_str()) == 0) return i;
+    return -1;
+}
+
 void NavigateToSiblingArchive(int direction)
 {
     if (g_app.nav.currentArchive.empty()) return;
 
-    // 親フォルダを取得
     wchar_t parentDir[MAX_PATH];
     wcscpy_s(parentDir, g_app.nav.currentArchive.c_str());
     PathRemoveFileSpecW(parentDir);
 
-    // 親フォルダ内の書庫ファイルをソート済みで列挙
-    std::wstring search = std::wstring(parentDir) + L"\\*";
-    std::vector<std::wstring> archives;
+    std::vector<NavSortItem> items;
+    if (!EnumParentItems(parentDir, items, true)) return;
+    SortNavItems(items);
 
-    WIN32_FIND_DATAW fd;
-    HANDLE hFind = FindFirstFileExW(search.c_str(), FindExInfoBasic, &fd,
-                                     FindExSearchNameMatch, nullptr, FIND_FIRST_EX_LARGE_FETCH);
-    if (hFind == INVALID_HANDLE_VALUE) return;
-
-    do
-    {
-        if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) continue;
-        if (fd.dwFileAttributes & (FILE_ATTRIBUTE_HIDDEN | FILE_ATTRIBUTE_SYSTEM)) continue;
-        if (IsArchiveFile(fd.cFileName))
-            archives.push_back(std::wstring(parentDir) + L"\\" + fd.cFileName);
-    } while (FindNextFileW(hFind, &fd));
-    FindClose(hFind);
-
-    if (archives.empty()) return;
-
-    // 名前順ソート
-    std::sort(archives.begin(), archives.end(),
-        [](const std::wstring& a, const std::wstring& b) {
-            return _wcsicmp(a.c_str(), b.c_str()) < 0;
-        });
-
-    // 現在の書庫のインデックスを探す
-    int curIdx = -1;
-    for (int i = 0; i < (int)archives.size(); i++)
-    {
-        if (_wcsicmp(archives[i].c_str(), g_app.nav.currentArchive.c_str()) == 0)
-        { curIdx = i; break; }
-    }
+    int curIdx = FindCurrentIndex(items, g_app.nav.currentArchive);
     if (curIdx < 0) return;
 
     int nextIdx = curIdx + direction;
-    if (nextIdx < 0 || nextIdx >= (int)archives.size()) return;
+    if (nextIdx < 0 || nextIdx >= (int)items.size()) return;
 
-    NavigateTo(archives[nextIdx]);
+    NavigateTo(items[nextIdx].fullPath);
+}
+
+void NavigateToSiblingFolder(int direction)
+{
+    if (g_app.nav.currentFolder.empty()) return;
+
+    wchar_t parentDir[MAX_PATH];
+    wcscpy_s(parentDir, g_app.nav.currentFolder.c_str());
+    PathRemoveFileSpecW(parentDir);
+    if (wcslen(parentDir) == 0) return;
+
+    std::vector<NavSortItem> items;
+    if (!EnumParentItems(parentDir, items, false)) return;
+    SortNavItems(items);
+
+    int curIdx = FindCurrentIndex(items, g_app.nav.currentFolder);
+    if (curIdx < 0) return;
+
+    int nextIdx = curIdx + direction;
+    if (nextIdx < 0 || nextIdx >= (int)items.size()) return;
+
+    NavigateTo(items[nextIdx].fullPath);
 }
 
 int GetArchiveLoadGeneration() { return g_archiveLoadGeneration.load(); }

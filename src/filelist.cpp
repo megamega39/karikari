@@ -1,6 +1,7 @@
 #include "filelist.h"
 #include "archive.h"
 #include "tree.h"
+#include "stream_cache.h"
 #include "media.h"
 #include "utils.h"
 #include "i18n.h"
@@ -556,6 +557,24 @@ static HBITMAP CreateThumbnailBitmap(const std::wstring& path, int cx, int cy,
 static std::atomic<bool> g_thumbCancelFlag{false};
 static std::thread g_thumbThread;
 
+// サムネイル用 thread_local COM/WICFactory（スレッド再利用で高速化）
+struct ThumbComGuard {
+    bool initialized = false;
+    ThumbComGuard() { initialized = SUCCEEDED(CoInitializeEx(nullptr, COINIT_MULTITHREADED)); }
+    ~ThumbComGuard() { if (initialized) CoUninitialize(); }
+};
+static thread_local ThumbComGuard tl_thumbCom;
+static thread_local ComPtr<IWICImagingFactory> tl_thumbWicFactory;
+
+static IWICImagingFactory* GetThumbWicFactory() {
+    (void)tl_thumbCom;
+    if (!tl_thumbWicFactory) {
+        CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER,
+                         IID_PPV_ARGS(tl_thumbWicFactory.GetAddressOf()));
+    }
+    return tl_thumbWicFactory.Get();
+}
+
 // 個別サムネイル生成ワーカー（スレッドプールで並行実行）
 struct ThumbWorkItem { int idx; std::wstring path; HWND hwndMain; };
 
@@ -565,22 +584,25 @@ static void ThumbWorkerFunc(PTP_CALLBACK_INSTANCE, PVOID ctx, PTP_WORK)
     if (g_thumbCancelFlag.load(std::memory_order_relaxed))
     { delete wi; return; }
 
-    HRESULT hrCom = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
-    bool comInit = SUCCEEDED(hrCom);
-    ComPtr<IWICImagingFactory> factory;
-    CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER,
-                     IID_PPV_ARGS(factory.GetAddressOf()));
-    if (!factory) { if (comInit) CoUninitialize(); delete wi; return; }
+    IWICImagingFactory* factory = GetThumbWicFactory();
+    if (!factory) { delete wi; return; }
 
     HBITMAP hbmp = nullptr;
     std::wstring arcPath, entryPath;
     if (SplitArchivePath(wi->path, arcPath, entryPath))
     {
-        // 書庫内画像
-        std::vector<BYTE> buffer;
-        if (ExtractToMemory(arcPath, entryPath, buffer) && !buffer.empty())
-            hbmp = CreateThumbnailBitmap(wi->path, g_thumbSize, g_thumbSize, factory.Get(),
-                                         buffer.data(), buffer.size());
+        // 書庫内画像: StreamCacheを先にチェック（プリフェッチ済みなら再展開不要）
+        auto cached = StreamCacheGet(wi->path);
+        if (cached)
+            hbmp = CreateThumbnailBitmap(wi->path, g_thumbSize, g_thumbSize, factory,
+                                         cached->data(), cached->size());
+        else
+        {
+            std::vector<BYTE> buffer;
+            if (ExtractToMemory(arcPath, entryPath, buffer) && !buffer.empty())
+                hbmp = CreateThumbnailBitmap(wi->path, g_thumbSize, g_thumbSize, factory,
+                                             buffer.data(), buffer.size());
+        }
     }
     else if (IsArchiveFile(wi->path))
     {
@@ -595,7 +617,7 @@ static void ThumbWorkerFunc(PTP_CALLBACK_INSTANCE, PVOID ctx, PTP_WORK)
                     std::vector<BYTE> buffer;
                     if (ExtractToMemory(wi->path, e.path, buffer) && !buffer.empty())
                         hbmp = CreateThumbnailBitmap(wi->path, g_thumbSize, g_thumbSize,
-                                                     factory.Get(), buffer.data(), buffer.size());
+                                                     factory, buffer.data(), buffer.size());
                     break;
                 }
             }
@@ -607,7 +629,7 @@ static void ThumbWorkerFunc(PTP_CALLBACK_INSTANCE, PVOID ctx, PTP_WORK)
         if (IsImageFile(wi->path))
         {
             // 通常の画像ファイル
-            hbmp = CreateThumbnailBitmap(wi->path, g_thumbSize, g_thumbSize, factory.Get());
+            hbmp = CreateThumbnailBitmap(wi->path, g_thumbSize, g_thumbSize, factory);
         }
         else
         {
@@ -639,7 +661,7 @@ static void ThumbWorkerFunc(PTP_CALLBACK_INSTANCE, PVOID ctx, PTP_WORK)
                         if (!(fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) && IsImageFile(fd.cFileName))
                         {
                             std::wstring imgPath = wi->path + L"\\" + fd.cFileName;
-                            hbmp = CreateThumbnailBitmap(imgPath, g_thumbSize, g_thumbSize, factory.Get());
+                            hbmp = CreateThumbnailBitmap(imgPath, g_thumbSize, g_thumbSize, factory);
                             break;
                         }
                     } while (FindNextFileW(hFind, &fd));
@@ -657,7 +679,6 @@ static void ThumbWorkerFunc(PTP_CALLBACK_INSTANCE, PVOID ctx, PTP_WORK)
     else if (hbmp)
         DeleteObject(hbmp);
 
-    if (comInit) CoUninitialize();
     delete wi;
 }
 

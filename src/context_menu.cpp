@@ -455,7 +455,10 @@ void ShowFileContextMenu(HWND hwnd, const std::wstring& path, POINT pt)
             if (!hTarget)
                 hTarget = (HTREEITEM)SendMessageW(g_app.wnd.hwndTree, TVM_GETNEXTITEM, TVGN_CARET, 0);
             if (hTarget)
+            {
+                g_treeEditAllowed = true;
                 SendMessageW(g_app.wnd.hwndTree, TVM_EDITLABEL, 0, (LPARAM)hTarget);
+            }
         }
     }
     else if (cmd == CTX_DELETE)

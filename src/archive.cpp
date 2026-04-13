@@ -6,6 +6,8 @@
 #include <unordered_map>
 #include <mutex>
 #include <chrono>
+#include <numeric>
+#include <algorithm>
 
 // === 7zip SDK ミニマル型定義 ===
 typedef int Int32;
@@ -313,6 +315,52 @@ public:
     STDMETHOD(GetStream)(UInt32, ISequentialOutStream** outStream, Int32 askExtractMode) override {
         if (askExtractMode != 0) { *outStream = nullptr; return S_OK; }
         *outStream = new MemoryOutStream(buffer_);
+        return S_OK;
+    }
+    STDMETHOD(PrepareOperation)(Int32) override { return S_OK; }
+    STDMETHOD(SetOperationResult)(Int32) override { return S_OK; }
+};
+
+// === バッチメモリ展開コールバック（複数エントリを1パスで展開） ===
+class BatchMemoryExtractCallback : public IArchiveExtractCallback {
+    LONG refCount_ = 1;
+    std::unordered_map<UInt32, size_t> indexToResult_;
+    std::vector<BatchExtractResult>& results_;
+    std::unordered_map<UInt32, ULONGLONG> indexToSize_;
+public:
+    BatchMemoryExtractCallback(
+        std::vector<BatchExtractResult>& results,
+        const std::vector<UInt32>& indices,
+        const std::vector<size_t>& resultIndices,
+        const std::unordered_map<UInt32, ULONGLONG>& sizes)
+        : results_(results), indexToSize_(sizes)
+    {
+        for (size_t i = 0; i < indices.size(); i++)
+            indexToResult_[indices[i]] = resultIndices[i];
+    }
+    STDMETHOD(QueryInterface)(REFIID iid, void** ppv) override {
+        if (iid == __uuidof(IUnknown) || iid == __uuidof(IProgress) || iid == __uuidof(IArchiveExtractCallback)) {
+            *ppv = static_cast<IArchiveExtractCallback*>(this); AddRef(); return S_OK;
+        }
+        *ppv = nullptr; return E_NOINTERFACE;
+    }
+    STDMETHOD_(ULONG, AddRef)() override { return InterlockedIncrement(&refCount_); }
+    STDMETHOD_(ULONG, Release)() override {
+        LONG r = InterlockedDecrement(&refCount_);
+        if (r == 0) delete this;
+        return r;
+    }
+    STDMETHOD(SetTotal)(UInt64) override { return S_OK; }
+    STDMETHOD(SetCompleted)(const UInt64*) override { return S_OK; }
+    STDMETHOD(GetStream)(UInt32 index, ISequentialOutStream** outStream, Int32 askExtractMode) override {
+        if (askExtractMode != 0) { *outStream = nullptr; return S_OK; }
+        auto it = indexToResult_.find(index);
+        if (it == indexToResult_.end()) { *outStream = nullptr; return S_OK; }
+        auto& buf = results_[it->second].buffer;
+        buf.clear();
+        auto sizeIt = indexToSize_.find(index);
+        if (sizeIt != indexToSize_.end()) buf.reserve((size_t)sizeIt->second);
+        *outStream = new MemoryOutStream(buf);
         return S_OK;
     }
     STDMETHOD(PrepareOperation)(Int32) override { return S_OK; }
@@ -662,23 +710,46 @@ bool ExtractBatchToMemory(const std::wstring& archivePath,
     IInArchive* archive = GetCachedArchive(archivePath);
     if (!archive || !g_currentHandle) return false;
 
+    // 全エントリのインデックスを収集
+    std::vector<UInt32> indices;
+    std::vector<size_t> resultIndices;
+    std::unordered_map<UInt32, ULONGLONG> indexToSize;
+
     for (size_t i = 0; i < entryPaths.size(); i++)
     {
         std::wstring key = entryPaths[i];
         NormalizePathInPlace(key);
         auto it = g_currentHandle->entryIndexMap.find(key);
         if (it == g_currentHandle->entryIndexMap.end()) continue;
-
-        UInt32 targetIndex = it->second;
-        // 既知サイズで事前確保（再アロケーション削減）
-        for (auto& e : g_currentHandle->entryList) {
-            if (e.index == targetIndex) { results[i].buffer.reserve(static_cast<size_t>(e.size)); break; }
-        }
-        MemoryExtractCallback* cb = new MemoryExtractCallback(results[i].buffer);
-        HRESULT hr = archive->Extract(&targetIndex, 1, 0, cb);
-        cb->Release();
-        results[i].ok = SUCCEEDED(hr) && !results[i].buffer.empty();
+        indices.push_back(it->second);
+        resultIndices.push_back(i);
+        for (auto& e : g_currentHandle->entryList)
+            if (e.index == it->second) { indexToSize[it->second] = e.size; break; }
     }
+
+    if (indices.empty()) return true;
+
+    // インデックスをソート（7z.dllはソート済みインデックスを期待、ソリッド書庫で1パス展開）
+    std::vector<size_t> order(indices.size());
+    std::iota(order.begin(), order.end(), 0);
+    std::sort(order.begin(), order.end(), [&](size_t a, size_t b) {
+        return indices[a] < indices[b];
+    });
+    std::vector<UInt32> sortedIndices;
+    std::vector<size_t> sortedResultIndices;
+    for (size_t i : order) {
+        sortedIndices.push_back(indices[i]);
+        sortedResultIndices.push_back(resultIndices[i]);
+    }
+
+    // 一括展開（ソリッド7z/RARで大幅高速化）
+    auto* cb = new BatchMemoryExtractCallback(results, sortedIndices, sortedResultIndices, indexToSize);
+    HRESULT hr = archive->Extract(sortedIndices.data(), (UInt32)sortedIndices.size(), 0, cb);
+    cb->Release();
+
+    for (size_t i = 0; i < sortedResultIndices.size(); i++)
+        results[sortedResultIndices[i]].ok = SUCCEEDED(hr) && !results[sortedResultIndices[i]].buffer.empty();
+
     return true;
 }
 

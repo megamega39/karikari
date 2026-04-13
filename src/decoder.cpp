@@ -115,7 +115,7 @@ static HRESULT ConvertAndOptionalResize(IWICBitmapSource* frame, ID2D1RenderTarg
 
     // デコード時リサイズ: 元画像が表示領域の1.5倍以上大きい場合
     ComPtr<IWICBitmapSource> source = frame;
-    if (viewW > 0 && viewH > 0 && imgW > viewW * 2 && imgH > viewH * 2)
+    if (viewW > 0 && viewH > 0 && imgW > viewW * 2 || imgH > viewH * 2)
     {
         float scale = std::min((float)viewW / imgW, (float)viewH / imgH);
         UINT dstW = std::max(1U, (UINT)(imgW * scale));
@@ -214,7 +214,7 @@ static HRESULT DecodeFrameToWicBitmap(IWICBitmapSource* frame, IWICImagingFactor
     {
         UINT viewW = g_app.viewer.cachedViewW.load(std::memory_order_relaxed);
         UINT viewH = g_app.viewer.cachedViewH.load(std::memory_order_relaxed);
-        if (viewW > 0 && viewH > 0 && imgW > viewW * 2 && imgH > viewH * 2)
+        if (viewW > 0 && viewH > 0 && imgW > viewW * 2 || imgH > viewH * 2)
         {
             float scale = std::min((float)viewW / imgW, (float)viewH / imgH);
             UINT dstW = std::max(1U, (UINT)(imgW * scale));

@@ -303,11 +303,24 @@ static void ExecuteAction(HWND hwnd, const std::wstring& action, HWND focused)
     {
         if (g_app.nav.inArchiveMode && !g_app.nav.currentArchive.empty())
             NavigateToSiblingArchive(-1);
+        else if (g_app.isFullscreen)
+            NavigateToSiblingFolder(-1); // 最大化時はフォルダベースで移動
+        else
+        {
+            SetFocus(g_app.wnd.hwndTree);
+        }
     }
     else if (action == L"next_archive")
     {
         if (g_app.nav.inArchiveMode && !g_app.nav.currentArchive.empty())
             NavigateToSiblingArchive(1);
+        else if (g_app.isFullscreen)
+            NavigateToSiblingFolder(1);
+        else
+        {
+            SetFocus(g_app.wnd.hwndTree);
+            SendMessageW(g_app.wnd.hwndTree, TVM_ENDEDITLABELNOW, TRUE, 0);
+        }
     }
     else if (action == L"nav_back")    NavigateBack();
     else if (action == L"nav_forward") NavigateForward();
@@ -374,7 +387,10 @@ static void ExecuteAction(HWND hwnd, const std::wstring& action, HWND focused)
             // ツリーにフォーカス: インラインラベル編集
             HTREEITEM hSel = (HTREEITEM)SendMessageW(g_app.wnd.hwndTree, TVM_GETNEXTITEM, TVGN_CARET, 0);
             if (hSel)
+            {
+                g_treeEditAllowed = true;
                 SendMessageW(g_app.wnd.hwndTree, TVM_EDITLABEL, 0, (LPARAM)hSel);
+            }
         }
         else
         {

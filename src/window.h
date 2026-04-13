@@ -14,3 +14,4 @@ void UpdateSortButtonLabels();
 extern HFONT g_uiFont;
 extern HFONT g_uiFontBold;
 extern HTREEITEM g_treeRClickItem;
+extern bool g_treeEditAllowed;
