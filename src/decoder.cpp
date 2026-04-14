@@ -108,14 +108,16 @@ static HRESULT ConvertAndOptionalResize(IWICBitmapSource* frame, ID2D1RenderTarg
     UINT imgW, imgH;
     frame->GetSize(&imgW, &imgH);
 
-    // 表示領域サイズを取得
+    // 表示領域サイズを取得（ピクセル単位に変換、高DPI対応）
     auto rtSize = rt->GetSize();
-    UINT viewW = (UINT)rtSize.width;
-    UINT viewH = (UINT)rtSize.height;
+    float dpiX, dpiY;
+    rt->GetDpi(&dpiX, &dpiY);
+    UINT viewW = (UINT)(rtSize.width * dpiX / 96.0f);
+    UINT viewH = (UINT)(rtSize.height * dpiY / 96.0f);
 
-    // デコード時リサイズ: 元画像が表示領域の1.5倍以上大きい場合
+    // デコード時リサイズ: 元画像が表示領域の2倍以上大きい場合
     ComPtr<IWICBitmapSource> source = frame;
-    if (viewW > 0 && viewH > 0 && imgW > viewW * 2 || imgH > viewH * 2)
+    if (viewW > 0 && viewH > 0 && (imgW > viewW * 2 || imgH > viewH * 2))
     {
         float scale = std::min((float)viewW / imgW, (float)viewH / imgH);
         UINT dstW = std::max(1U, (UINT)(imgW * scale));
@@ -212,9 +214,16 @@ static HRESULT DecodeFrameToWicBitmap(IWICBitmapSource* frame, IWICImagingFactor
 
     if (imgW > 0 && imgH > 0)
     {
-        UINT viewW = g_app.viewer.cachedViewW.load(std::memory_order_relaxed);
-        UINT viewH = g_app.viewer.cachedViewH.load(std::memory_order_relaxed);
-        if (viewW > 0 && viewH > 0 && imgW > viewW * 2 || imgH > viewH * 2)
+        // DIP → ピクセル変換（高DPI対応）
+        float dpiScale = 1.0f;
+        if (g_app.viewer.deviceContext) {
+            float dx, dy;
+            g_app.viewer.deviceContext->GetDpi(&dx, &dy);
+            dpiScale = dx / 96.0f;
+        }
+        UINT viewW = (UINT)(g_app.viewer.cachedViewW.load(std::memory_order_relaxed) * dpiScale);
+        UINT viewH = (UINT)(g_app.viewer.cachedViewH.load(std::memory_order_relaxed) * dpiScale);
+        if (viewW > 0 && viewH > 0 && (imgW > viewW * 2 || imgH > viewH * 2))
         {
             float scale = std::min((float)viewW / imgW, (float)viewH / imgH);
             UINT dstW = std::max(1U, (UINT)(imgW * scale));

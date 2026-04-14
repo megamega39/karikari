@@ -18,6 +18,7 @@ struct AppSettings {
     bool spreadFirstSingle = true;    // 見開き時最初のページを単独表示（leeyez_kai準拠）
     bool recursiveLoad = false;       // サブフォルダ再帰読み込み
     bool autoPlayMedia = true;        // 動画自動再生
+    bool loopMedia = false;            // 動画ループ再生
     float spreadThreshold = 1.0f;     // 見開き判定閾値
     int thumbnailSize = 192;          // サムネイルサイズ
     int previewSize = 320;            // プレビューサイズ

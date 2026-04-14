@@ -112,10 +112,13 @@ static double g_volume = 1.0;
 static bool g_muted = false;
 static double g_volumeBeforeMute = 1.0;
 static bool g_seekDragging = false;
-static int g_hoverBtn = 0; // 0=none, 1=loop, 2=autoplay, 3=vol
+static int g_hoverBtn = 0; // 0=none, 1=loop, 2=autoplay, 3=vol, 4=speed
 static HWND g_tooltip = nullptr;
+static double g_speed = 1.0;
+static const double kSpeeds[] = { 0.5, 0.6, 0.7, 0.8, 0.9, 1.0, 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 1.8, 1.9, 2.0 };
 static void GetLoopBtnRect(HWND h, RECT& o);
 static void GetAutoPlayBtnRect(HWND h, RECT& o);
+static void GetSpeedBtnRect(HWND h, RECT& o);
 
 static void CreateControlBarTooltip(HWND hwndParent, HINSTANCE hInst)
 {
@@ -240,12 +243,13 @@ static std::wstring FormatTime(double s) {
     return b;
 }
 
-// 右端から: [音量バー90px][gap2][🔊20px][gap8][🔁32px][gap8][A32px][gap4][時間110px][シークバー]
-static void GetSeekBarRect(HWND h, RECT& o) { RECT r; GetClientRect(h,&r); o={44,14,r.right-326,26}; }
+// 右端から: [音量バー90px][gap2][🔊20px][gap8][🔁32px][gap8][A32px][gap8][1.0x 42px][gap4][時間110px][シークバー]
+static void GetSeekBarRect(HWND h, RECT& o) { RECT r; GetClientRect(h,&r); o={44,14,r.right-376,26}; }
 static void GetVolumeBarRect(HWND h, RECT& o) { RECT r; GetClientRect(h,&r); o={r.right-98,16,r.right-8,24}; }
 static void GetVolIconRect(HWND h, RECT& o) { RECT r; GetClientRect(h,&r); o={r.right-120,4,r.right-100,36}; }
 static void GetLoopBtnRect(HWND h, RECT& o) { RECT r; GetClientRect(h,&r); o={r.right-160,4,r.right-128,36}; }
 static void GetAutoPlayBtnRect(HWND h, RECT& o) { RECT r; GetClientRect(h,&r); o={r.right-200,4,r.right-168,36}; }
+static void GetSpeedBtnRect(HWND h, RECT& o) { RECT r; GetClientRect(h,&r); o={r.right-250,4,r.right-208,36}; }
 
 // GDI ブラシキャッシュ（MediaInit で作成）
 static HBRUSH g_brDark   = nullptr;
@@ -348,6 +352,39 @@ static void PaintControlBar(HWND hwnd, HDC hdc) {
     }
     SetTextColor(hdc, RGB(220, 220, 220));
 
+    // 速度ボタン
+    RECT spr; GetSpeedBtnRect(hwnd, spr);
+    {
+        bool isDefault = (abs(g_speed - 1.0) < 0.01);
+        RECT bgRect = { spr.left - 2, spr.top + 4, spr.right + 2, spr.bottom - 4 };
+        if (!isDefault)
+        {
+            HBRUSH hBg = CreateSolidBrush(RGB(66, 133, 244));
+            FillRect(hdc, &bgRect, hBg);
+            DeleteObject(hBg);
+            SetTextColor(hdc, RGB(255, 255, 255));
+        }
+        else if (g_hoverBtn == 4)
+        {
+            HBRUSH hBg = CreateSolidBrush(RGB(70, 70, 70));
+            FillRect(hdc, &bgRect, hBg);
+            DeleteObject(hBg);
+            SetTextColor(hdc, RGB(220, 220, 220));
+        }
+        else
+        {
+            SetTextColor(hdc, RGB(160, 160, 160));
+        }
+        static HFONT hSpeedFont = CreateFontW(-12, 0, 0, 0, FW_BOLD, 0, 0, 0,
+            DEFAULT_CHARSET, 0, 0, CLEARTYPE_QUALITY, 0, L"Segoe UI");
+        HFONT hPrev = hSpeedFont ? (HFONT)SelectObject(hdc, hSpeedFont) : nullptr;
+        wchar_t speedBuf[16];
+        swprintf_s(speedBuf, L"%.1fx", g_speed);
+        DrawTextW(hdc, speedBuf, -1, &spr, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+        if (hPrev) SelectObject(hdc, hPrev);
+    }
+    SetTextColor(hdc, RGB(220, 220, 220));
+
     // 音量アイコン（Segoe Fluent Icons）
     RECT vi; GetVolIconRect(hwnd, vi);
     {
@@ -379,6 +416,27 @@ static void OnControlBarClick(HWND hwnd, int x, int y, bool drag) {
             s.autoPlayMedia = !s.autoPlayMedia;
             SaveSettings(s);
             InvalidateSettingsCache();
+            InvalidateRect(hwnd,0,TRUE); return;
+        }
+        // 速度ボタン: ポップアップメニューで選択
+        RECT spr; GetSpeedBtnRect(hwnd, spr);
+        if (x>=spr.left&&x<spr.right) {
+            HMENU hMenu = CreatePopupMenu();
+            for (int i = 0; i < _countof(kSpeeds); i++) {
+                wchar_t buf[16];
+                swprintf_s(buf, L"%.1fx", kSpeeds[i]);
+                UINT flags = MF_STRING;
+                if (abs(g_speed - kSpeeds[i]) < 0.01) flags |= MF_CHECKED;
+                AppendMenuW(hMenu, flags, 100 + i, buf);
+            }
+            POINT pt = { spr.left, spr.top };
+            ClientToScreen(hwnd, &pt);
+            int cmd = TrackPopupMenu(hMenu, TPM_RETURNCMD | TPM_BOTTOMALIGN, pt.x, pt.y, 0, hwnd, nullptr);
+            DestroyMenu(hMenu);
+            if (cmd >= 100 && cmd < 100 + (int)_countof(kSpeeds)) {
+                g_speed = kSpeeds[cmd - 100];
+                MediaSetSpeed(g_speed);
+            }
             InvalidateRect(hwnd,0,TRUE); return;
         }
         // 音量アイコンクリック: ミュートトグル
@@ -419,9 +477,11 @@ static LRESULT CALLBACK ControlBarWndProc(HWND h, UINT m, WPARAM w, LPARAM l) {
         RECT lr; GetLoopBtnRect(h, lr);
         RECT ar; GetAutoPlayBtnRect(h, ar);
         RECT vi; GetVolIconRect(h, vi);
+        RECT spr; GetSpeedBtnRect(h, spr);
         if (mx>=lr.left&&mx<lr.right) newHover = 1;
         else if (mx>=ar.left&&mx<ar.right) newHover = 2;
         else if (mx>=vi.left&&mx<vi.right) newHover = 3;
+        else if (mx>=spr.left&&mx<spr.right) newHover = 4;
         if (newHover != g_hoverBtn) {
             g_hoverBtn = newHover;
             InvalidateRect(h,0,TRUE);
@@ -433,6 +493,7 @@ static LRESULT CALLBACK ControlBarWndProc(HWND h, UINT m, WPARAM w, LPARAM l) {
                 ti.uId = (UINT_PTR)h;
                 if (newHover == 1) ti.lpszText = (LPWSTR)I18nGet(L"media.loop").c_str();
                 else if (newHover == 2) ti.lpszText = (LPWSTR)I18nGet(L"media.autoplay").c_str();
+                else if (newHover == 4) ti.lpszText = (LPWSTR)I18nGet(L"media.speed").c_str();
                 else ti.lpszText = (LPWSTR)L"";
                 SendMessageW(g_tooltip, TTM_UPDATETIPTEXTW, 0, (LPARAM)&ti);
                 if (!newHover) SendMessageW(g_tooltip, TTM_POP, 0, 0);
@@ -462,20 +523,83 @@ static LRESULT CALLBACK ControlBarWndProc(HWND h, UINT m, WPARAM w, LPARAM l) {
 }
 
 static bool g_renderClickPending = false;
+static bool g_dblClickConsumed = false;
 static constexpr UINT_PTR kClickTimer = 50;
+static constexpr UINT_PTR kAutoHideTimer = 51;
+static constexpr int kAutoHideCheckMs = 500; // 500ms間隔でチェック
+static constexpr int kAutoHideIdleMs = 3000; // 3秒無操作で非表示
+static bool g_controlBarVisible = true;
+static bool g_cursorHidden = false;
+static POINT g_lastCursorPos = {-1, -1};
+static ULONGLONG g_lastCursorMoveTime = 0;
+
+static void ShowControlBar(bool show)
+{
+    if (!g_controlBar) return;
+    if (show == g_controlBarVisible) return;
+    g_controlBarVisible = show;
+    ShowWindow(g_controlBar, show ? SW_SHOW : SW_HIDE);
+    // 全画面時: バーと一緒にカーソルも表示/非表示
+    if (g_app.isFullscreen) {
+        if (!show && !g_cursorHidden) {
+            SetCursor(nullptr);
+            g_cursorHidden = true;
+        } else if (show && g_cursorHidden) {
+            SetCursor(LoadCursorW(nullptr, IDC_ARROW));
+            g_cursorHidden = false;
+        }
+    }
+    if (g_app.isFullscreen && g_app.wnd.hwndMediaPlayer)
+    {
+        RECT r; GetClientRect(g_app.wnd.hwndMediaPlayer, &r);
+        int h = r.bottom;
+        int barH = show ? kControlBarH : 0;
+        if (g_renderHwnd) MoveWindow(g_renderHwnd, 0, 0, r.right, h - barH, TRUE);
+        if (g_controlBar && show) MoveWindow(g_controlBar, 0, h - kControlBarH, r.right, kControlBarH, TRUE);
+        if (g_mfVideoDisplay) { RECT vr = {0, 0, r.right, h - barH}; g_mfVideoDisplay->SetVideoPosition(nullptr, &vr); }
+    }
+}
+
+static bool g_autoHideActive = false;
+
+static void StartAutoHidePolling(HWND hwnd)
+{
+    if (!g_app.isFullscreen) return;
+    if (!g_autoHideActive) {
+        // 初回のみタイムスタンプ更新（WM_SIZEによる再起動でリセットしない）
+        GetCursorPos(&g_lastCursorPos);
+        g_lastCursorMoveTime = GetTickCount64();
+    }
+    g_autoHideActive = true;
+    SetTimer(hwnd, kAutoHideTimer, kAutoHideCheckMs, nullptr);
+}
+
+static void StopAutoHidePolling(HWND hwnd)
+{
+    KillTimer(hwnd, kAutoHideTimer);
+    g_autoHideActive = false;
+    ShowControlBar(true);
+}
 
 static LRESULT CALLBACK RenderWndProc(HWND h, UINT m, WPARAM w, LPARAM l) {
     switch(m) {
+    case WM_SETCURSOR:
+        if (g_cursorHidden) { SetCursor(nullptr); return TRUE; }
+        break; // デフォルト処理に任せる
     case WM_LBUTTONUP:
-        // シングルクリック判定（ダブルクリックと区別するため遅延、250msで高速応答）
+        if (g_dblClickConsumed) { g_dblClickConsumed = false; return 0; } // ダブルクリック後の2回目UPを無視
         g_renderClickPending = true;
         SetTimer(h, kClickTimer, 250, nullptr);
         return 0;
     case WM_LBUTTONDBLCLK:
-        // ダブルクリック: シングルクリックをキャンセルして全画面
         g_renderClickPending = false;
+        g_dblClickConsumed = true;
         KillTimer(h, kClickTimer);
         PostMessageW(g_app.wnd.hwndMain, WM_TOGGLE_FULLSCREEN, 0, 0);
+        return 0;
+    case WM_MOUSEMOVE:
+        // mpvが描画中にWM_MOUSEMOVEを連発するため、ここでは何もしない
+        // カーソル移動の検出はポーリングタイマー（GetCursorPos比較）で行う
         return 0;
     case WM_TIMER:
         if (w == kClickTimer) {
@@ -484,6 +608,26 @@ static LRESULT CALLBACK RenderWndProc(HWND h, UINT m, WPARAM w, LPARAM l) {
                 g_renderClickPending = false;
                 MediaTogglePlayPause();
                 if (g_controlBar) InvalidateRect(g_controlBar, 0, TRUE);
+                // 一時停止したらバーを表示し続ける
+                if (!g_isPlaying && g_app.isFullscreen) {
+                    KillTimer(h, kAutoHideTimer);
+                    ShowControlBar(true);
+                }
+            }
+            return 0;
+        }
+        if (w == kAutoHideTimer) {
+            // ポーリング: カーソル位置を比較して動いたか判定
+            POINT cur; GetCursorPos(&cur);
+            if (cur.x != g_lastCursorPos.x || cur.y != g_lastCursorPos.y) {
+                g_lastCursorPos = cur;
+                g_lastCursorMoveTime = GetTickCount64();
+                if (!g_controlBarVisible) ShowControlBar(true);
+            } else {
+                // カーソル静止中: アイドル時間超過なら非表示
+                if (g_app.isFullscreen && g_isPlaying &&
+                    GetTickCount64() - g_lastCursorMoveTime >= (ULONGLONG)kAutoHideIdleMs)
+                    ShowControlBar(false);
             }
             return 0;
         }
@@ -503,9 +647,16 @@ static LRESULT CALLBACK RenderWndProc(HWND h, UINT m, WPARAM w, LPARAM l) {
 
 static void LayoutMediaPlayer(HWND h) {
     RECT r; GetClientRect(h,&r); int w=r.right, ht=r.bottom;
-    if(g_renderHwnd) MoveWindow(g_renderHwnd,0,0,w,ht-kControlBarH,TRUE);
-    if(g_controlBar) MoveWindow(g_controlBar,0,ht-kControlBarH,w,kControlBarH,TRUE);
-    if(g_mfVideoDisplay){ RECT vr={0,0,w,ht-kControlBarH}; g_mfVideoDisplay->SetVideoPosition(nullptr,&vr); }
+    // 全画面解除時はバーを強制表示
+    if (!g_app.isFullscreen && !g_controlBarVisible)
+        ShowControlBar(true);
+    int barH = g_controlBarVisible ? kControlBarH : 0;
+    if(g_renderHwnd) MoveWindow(g_renderHwnd,0,0,w,ht-barH,TRUE);
+    if(g_controlBar && g_controlBarVisible) MoveWindow(g_controlBar,0,ht-kControlBarH,w,kControlBarH,TRUE);
+    if(g_mfVideoDisplay){ RECT vr={0,0,w,ht-barH}; g_mfVideoDisplay->SetVideoPosition(nullptr,&vr); }
+    // 全画面に入った時にポーリング開始
+    if (g_app.isFullscreen && g_isPlaying && g_renderHwnd)
+        StartAutoHidePolling(g_renderHwnd);
 }
 
 static LRESULT CALLBACK MediaPlayerWndProc(HWND h, UINT m, WPARAM w, LPARAM l) {
@@ -519,6 +670,7 @@ bool MediaInit(HINSTANCE hInst) {
     g_mpvAvailable = LoadMpvDll();
     HRESULT hr = MFStartup(MF_VERSION);
     g_mfInitialized = SUCCEEDED(hr);
+    g_isLoop = GetCachedSettings().loopMedia;
 
     // GDI ブラシ初期化
     g_brDark  = CreateSolidBrush(RGB(30, 30, 30));
@@ -664,6 +816,10 @@ void MediaPlay(const std::wstring& path) {
     g_currentMediaPath = path;
     if (g_controlBar) g_updateTimer = SetTimer(g_controlBar, 1, 250, nullptr);
 
+    // 全画面なら自動非表示ポーリング開始
+    if (g_app.isFullscreen && g_renderHwnd)
+        StartAutoHidePolling(g_renderHwnd);
+
     // 自動再生OFF: 読み込み直後に一時停止
     if (!GetCachedSettings().autoPlayMedia)
         MediaTogglePlayPause();
@@ -671,6 +827,11 @@ void MediaPlay(const std::wstring& path) {
 
 void MediaStop() {
     if (g_updateTimer && g_controlBar) { KillTimer(g_controlBar, g_updateTimer); g_updateTimer = 0; }
+    if (g_renderHwnd) KillTimer(g_renderHwnd, kAutoHideTimer);
+    g_autoHideActive = false;
+    g_controlBarVisible = true; // 次回表示時は表示状態から開始
+    if (g_controlBar) ShowWindow(g_controlBar, SW_SHOW);
+    if (g_cursorHidden) { SetCursor(LoadCursorW(nullptr, IDC_ARROW)); g_cursorHidden = false; }
 
     if (g_mpv && !g_usingMF) {
         const char* cmd[] = {"stop", NULL};
@@ -680,7 +841,7 @@ void MediaStop() {
         g_mfSession->Stop(); g_mfSession->Close(); g_mfSession.Reset();
     }
     g_mfVideoDisplay.Reset(); g_mfAudioVolume.Reset();
-    g_isPlaying = false; g_mfDuration = 0; g_currentMediaPath.clear();
+    g_isPlaying = false; g_mfDuration = 0; g_currentMediaPath.clear(); g_speed = 1.0;
     // 一時メディアファイル削除
     if (!g_tempMediaFile.empty()) {
         DeleteFileW(g_tempMediaFile.c_str());
@@ -700,6 +861,11 @@ void MediaTogglePlayPause() {
         else { PROPVARIANT v; PropVariantInit(&v); g_mfSession->Start(&GUID_NULL,&v); PropVariantClear(&v); g_isPlaying = true; }
     }
     if (g_controlBar) InvalidateRect(g_controlBar, 0, TRUE);
+    // 再生再開時にポーリング開始、一時停止時にポーリング停止してバー表示
+    if (g_app.isFullscreen && g_renderHwnd) {
+        if (g_isPlaying) StartAutoHidePolling(g_renderHwnd);
+        else StopAutoHidePolling(g_renderHwnd);
+    }
 }
 
 void MediaSeek(double seconds) {
@@ -741,6 +907,13 @@ void MediaToggleLoop() {
     g_isLoop = !g_isLoop;
     if (g_mpv && !g_usingMF)
         fn_set_property_string(g_mpv, "loop-file", g_isLoop ? "inf" : "no");
+    // 設定に永続化
+    AppSettings s;
+    if (LoadSettings(s)) {
+        s.loopMedia = g_isLoop;
+        SaveSettings(s);
+        InvalidateSettingsCache();
+    }
 }
 
 double MediaGetPosition() {

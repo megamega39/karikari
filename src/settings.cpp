@@ -65,6 +65,7 @@ bool LoadSettings(AppSettings& s)
     JsonGetBool(json, L"spreadFirstSingle", s.spreadFirstSingle);
     JsonGetBool(json, L"recursiveLoad", s.recursiveLoad);
     JsonGetBool(json, L"autoPlayMedia", s.autoPlayMedia);
+    JsonGetBool(json, L"loopMedia", s.loopMedia);
     JsonGetFloat(json, L"spreadThreshold", s.spreadThreshold);
     JsonGetInt(json, L"thumbnailSize", s.thumbnailSize);
     JsonGetInt(json, L"previewSize", s.previewSize);
@@ -116,6 +117,7 @@ bool SaveSettings(const AppSettings& s)
     json += L"  \"spreadFirstSingle\": " + std::wstring(s.spreadFirstSingle ? L"true" : L"false") + L",\n";
     json += L"  \"recursiveLoad\": " + std::wstring(s.recursiveLoad ? L"true" : L"false") + L",\n";
     json += L"  \"autoPlayMedia\": " + std::wstring(s.autoPlayMedia ? L"true" : L"false") + L",\n";
+    json += L"  \"loopMedia\": " + std::wstring(s.loopMedia ? L"true" : L"false") + L",\n";
     json += L"  \"spreadThreshold\": " + std::wstring(threshBuf) + L",\n";
     json += L"  \"thumbnailSize\": " + std::to_wstring(s.thumbnailSize) + L",\n";
     json += L"  \"previewSize\": " + std::to_wstring(s.previewSize) + L",\n";
