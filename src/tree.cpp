@@ -23,52 +23,9 @@ static wchar_t* AllocPathStr(const std::wstring& path)
     return buf;
 }
 
-// SHGetFileInfo でシステムアイコンインデックスを取得（キャッシュ付き）
+// SHGetFileInfo でシステムアイコンインデックスを取得（メモリキャッシュのみ）
+// ※システムイメージリストのインデックスはセッションごとに変わりうるためディスク保存しない
 static std::unordered_map<std::wstring, int> g_iconIndexCache;
-static bool g_iconCacheDirty = false; // ディスク保存が必要か
-
-static std::wstring GetIconCachePath()
-{
-    wchar_t p[MAX_PATH];
-    GetModuleFileNameW(nullptr, p, MAX_PATH);
-    PathRemoveFileSpecW(p);
-    PathAppendW(p, L"icon_index.cache");
-    return p;
-}
-
-static void LoadIconCache()
-{
-    std::wstring data = ReadFileToWString(GetIconCachePath());
-    if (data.empty()) return;
-
-    size_t pos = 0;
-    while (pos < data.size())
-    {
-        size_t nl = data.find(L'\n', pos);
-        if (nl == std::wstring::npos) nl = data.size();
-        std::wstring line = data.substr(pos, nl - pos);
-        pos = nl + 1;
-        if (line.empty()) continue;
-
-        size_t tab = line.find(L'\t');
-        if (tab == std::wstring::npos) continue;
-
-        std::wstring key = line.substr(0, tab);
-        int idx = _wtoi(line.substr(tab + 1).c_str());
-        g_iconIndexCache[key] = idx;
-    }
-}
-
-static void SaveIconCache()
-{
-    if (!g_iconCacheDirty) return;
-    std::wstring data;
-    data.reserve(g_iconIndexCache.size() * 40);
-    for (auto& [key, idx] : g_iconIndexCache)
-        data += key + L"\t" + std::to_wstring(idx) + L"\n";
-    WriteWStringToFile(GetIconCachePath(), data);
-    g_iconCacheDirty = false;
-}
 
 // 汎用フォルダアイコン（起動時に1回だけ取得、全フォルダで共有）
 static int g_genericFolderIcon = -1;
@@ -100,7 +57,6 @@ static int GetIconIndex(const std::wstring& path, bool open = false, bool useFil
     }
 
     g_iconIndexCache[key] = sfi.iIcon;
-    g_iconCacheDirty = true;
     return sfi.iIcon;
 }
 
@@ -240,8 +196,8 @@ void InitFolderTree()
     HWND hwnd = g_app.wnd.hwndTree;
     if (!hwnd) return;
 
-    // ディスクキャッシュから復元（SHGetFileInfoW / FindFirstFileExW スキップ）
-    LoadIconCache();
+    // メモリキャッシュはセッション開始時にクリア（インデックスは毎回再取得）
+    g_iconIndexCache.clear();
     LoadSubfoldersCache();
 
     // 汎用フォルダアイコンを1回だけ取得（全フォルダノードで共有）
@@ -415,8 +371,6 @@ void InitFolderTree()
     SendMessageW(hwnd, WM_SETREDRAW, TRUE, 0); // 描画再開
     InvalidateRect(hwnd, nullptr, TRUE);
 
-    // アイコンインデックスキャッシュをディスクに保存（次回起動時に高速復元）
-    SaveIconCache();
     SaveSubfoldersCache();
 }
 
@@ -611,7 +565,6 @@ void ExpandTreeNode(HTREEITEM hItem)
 
 void SaveTreeCaches()
 {
-    SaveIconCache();
     SaveSubfoldersCache();
 }
 

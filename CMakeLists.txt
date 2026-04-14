@@ -33,6 +33,7 @@ add_executable(karikari WIN32
     src/context_menu.cpp
     src/viewer_toolbar.cpp
     src/karikari.manifest
+    res/karikari.rc
 )
 
 # libwebp (WebPアニメーション対応)
