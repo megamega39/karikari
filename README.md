@@ -12,7 +12,7 @@ Windows 向けの画像・動画・音声ビューア。ツリービューでフ
 - **先読み** — 次のページをバックグラウンドで先読み。ページ送りで待たされない
 - **本棚・お気に入り・履歴** — よく見るフォルダや書庫を登録してすぐアクセス
 - **キーボードショートカット** — すべてのキーを自由にカスタマイズ可能
-- **多言語対応** — 日本語・英語
+- **多言語対応** — 日本語・英語・中国語（簡体/繁体）・韓国語・スペイン語・ポルトガル語・フランス語・ドイツ語・ロシア語・ベトナム語・タイ語
 
 ## ダウンロード
 
@@ -76,7 +76,7 @@ An image, video, and audio viewer for Windows. Navigate folders and archives int
 - **Prefetch** — Background preloading of upcoming pages for instant page turns
 - **Bookshelf, favorites & history** — Pin frequently visited folders and archives for quick access
 - **Custom keybindings** — Fully configurable keyboard shortcuts
-- **Multilingual** — Japanese and English
+- **Multilingual** — Japanese, English, Chinese (Simplified/Traditional), Korean, Spanish, Portuguese, French, German, Russian, Vietnamese, and Thai
 
 ## Download
 
