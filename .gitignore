@@ -33,6 +33,15 @@ thumb_debug.log
 *.idb
 *.tlog
 
+# 配布物
+dist/
+
+# サードパーティDLL（リポジトリ外で管理）
+third_party/libmpv-2.dll
+
+# 作業用画像
+icon_cropped.png
+
 # その他特定環境のファイル
 .claude/
 Users
