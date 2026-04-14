@@ -1,6 +1,6 @@
 # karikari
 
-Windows 向けの画像・動画ビューア。書庫ファイルをそのまま開いて見開き表示したり、フォルダ内の画像や動画をサクサク閲覧できます。
+Windows 向けの画像・動画・音声ビューア。ツリービューでフォルダや書庫を直感的に操作しながら、画像や動画をサクサク閲覧できます。
 
 ## 特徴
 
@@ -64,7 +64,7 @@ Windows 向けの画像・動画ビューア。書庫ファイルをそのまま
 
 # karikari (English)
 
-An image and video viewer for Windows. Open archive files in spread view, or browse images and videos in folders seamlessly.
+An image, video, and audio viewer for Windows. Navigate folders and archives intuitively with the tree view, and browse images and videos seamlessly.
 
 ## Features
 

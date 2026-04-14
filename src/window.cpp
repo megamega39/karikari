@@ -2072,10 +2072,8 @@ static LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM l
         // 表示中の画像をキャッシュに保存（次回起動時に即表示）
         if (!g_app.nav.currentPath.empty())
         {
-            wchar_t cachePath[MAX_PATH];
-            GetModuleFileNameW(nullptr, cachePath, MAX_PATH);
-            PathRemoveFileSpecW(cachePath);
-            PathAppendW(cachePath, L"last_view.cache");
+            std::wstring cachePathStr = GetDataDir() + L"\\last_view.cache";
+            const wchar_t* cachePath = cachePathStr.c_str();
 
             std::wstring arcPath, entryPath;
             if (SplitArchivePath(g_app.nav.currentPath, arcPath, entryPath))
@@ -2176,10 +2174,8 @@ HWND CreateMainWindow(HINSTANCE hInst, int nCmdShow)
 
     // Step 2: キャッシュ画像を即座に表示（書庫Open不要、~50ms）
     {
-        wchar_t cachePath[MAX_PATH];
-        GetModuleFileNameW(nullptr, cachePath, MAX_PATH);
-        PathRemoveFileSpecW(cachePath);
-        PathAppendW(cachePath, L"last_view.cache");
+        std::wstring cachePathStr = GetDataDir() + L"\\last_view.cache";
+        const wchar_t* cachePath = cachePathStr.c_str();
 
         if (GetFileAttributesW(cachePath) != INVALID_FILE_ATTRIBUTES && g_app.viewer.deviceContext)
         {

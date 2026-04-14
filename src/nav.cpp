@@ -865,11 +865,7 @@ void ApplyArchiveLoadResult(ArchiveLoadResult* result)
 
 static std::wstring GetNavHistoryPath()
 {
-    wchar_t path[MAX_PATH];
-    GetModuleFileNameW(nullptr, path, MAX_PATH);
-    PathRemoveFileSpecW(path);
-    PathAppendW(path, L"nav_history.txt");
-    return path;
+    return GetDataDir() + L"\\nav_history.txt";
 }
 
 void NavHistorySave()

@@ -14,11 +14,7 @@
 
 std::wstring GetSettingsPath()
 {
-    wchar_t path[MAX_PATH];
-    GetModuleFileNameW(nullptr, path, MAX_PATH);
-    PathRemoveFileSpecW(path);
-    PathAppendW(path, L"settings.json");
-    return path;
+    return GetDataDir() + L"\\settings.json";
 }
 
 // JSON関数は utils.h に共通化済み
@@ -159,11 +155,7 @@ static std::vector<KeyBinding> g_keyBindings;
 
 static std::wstring GetKeyBindingsPath()
 {
-    wchar_t path[MAX_PATH];
-    GetModuleFileNameW(nullptr, path, MAX_PATH);
-    PathRemoveFileSpecW(path);
-    PathAppendW(path, L"keybindings.json");
-    return path;
+    return GetDataDir() + L"\\keybindings.json";
 }
 
 std::vector<KeyBinding>& GetKeyBindings() { return g_keyBindings; }

@@ -110,11 +110,7 @@ static bool g_subfoldersCacheDirty = false;
 
 static std::wstring GetSubfoldersCachePath()
 {
-    wchar_t p[MAX_PATH];
-    GetModuleFileNameW(nullptr, p, MAX_PATH);
-    PathRemoveFileSpecW(p);
-    PathAppendW(p, L"subfolders.cache");
-    return p;
+    return GetDataDir() + L"\\subfolders.cache";
 }
 
 static void LoadSubfoldersCache()

@@ -108,16 +108,10 @@ static bool IsValidEntryPath(const std::wstring& path); // 前方宣言
 
 static std::wstring GetEntryCachePath(const std::wstring& archivePath)
 {
-    // 書庫パスのハッシュでキャッシュファイル名を決定（複数書庫対応）
     size_t hash = std::hash<std::wstring>{}(archivePath);
     wchar_t name[64];
     swprintf_s(name, L"arc_cache_%zx.dat", hash);
-
-    wchar_t p[MAX_PATH];
-    GetModuleFileNameW(nullptr, p, MAX_PATH);
-    PathRemoveFileSpecW(p);
-    PathAppendW(p, name);
-    return p;
+    return GetDataDir() + L"\\" + name;
 }
 
 // 書庫のエントリリストをディスクに保存

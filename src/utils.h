@@ -1,6 +1,38 @@
 #pragma once
 #include <string>
 #include <shlwapi.h>
+#include <shlobj.h>
+
+// === データ保存先 ===
+// Program Files配下ならAppData、それ以外はexe横（ポータブル）
+inline std::wstring GetDataDir()
+{
+    static std::wstring cached;
+    if (!cached.empty()) return cached;
+
+    wchar_t exePath[MAX_PATH];
+    GetModuleFileNameW(nullptr, exePath, MAX_PATH);
+    PathRemoveFileSpecW(exePath);
+
+    wchar_t pf[MAX_PATH] = {}, pf86[MAX_PATH] = {};
+    SHGetFolderPathW(nullptr, CSIDL_PROGRAM_FILES, nullptr, 0, pf);
+    SHGetFolderPathW(nullptr, CSIDL_PROGRAM_FILESX86, nullptr, 0, pf86);
+
+    std::wstring exe(exePath);
+    if (_wcsnicmp(exe.c_str(), pf, wcslen(pf)) == 0 ||
+        _wcsnicmp(exe.c_str(), pf86, wcslen(pf86)) == 0)
+    {
+        wchar_t appdata[MAX_PATH];
+        SHGetFolderPathW(nullptr, CSIDL_APPDATA, nullptr, 0, appdata);
+        cached = std::wstring(appdata) + L"\\karikari";
+        CreateDirectoryW(cached.c_str(), nullptr);
+    }
+    else
+    {
+        cached = exe;
+    }
+    return cached;
+}
 
 // === パス正規化 ===
 inline std::wstring EnsureTrailingSlash(std::wstring path) {

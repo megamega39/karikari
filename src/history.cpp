@@ -9,11 +9,7 @@ static const int kMaxHistory = 500;
 
 static std::wstring GetHistoryPath()
 {
-    wchar_t path[MAX_PATH];
-    GetModuleFileNameW(nullptr, path, MAX_PATH);
-    PathRemoveFileSpecW(path);
-    PathAppendW(path, L"history.json");
-    return path;
+    return GetDataDir() + L"\\history.json";
 }
 
 static FILETIME GetCurrentFileTime()

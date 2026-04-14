@@ -8,11 +8,7 @@ static std::vector<BookshelfCategory> g_categories;
 
 static std::wstring GetBookshelfPath()
 {
-    wchar_t path[MAX_PATH];
-    GetModuleFileNameW(nullptr, path, MAX_PATH);
-    PathRemoveFileSpecW(path);
-    PathAppendW(path, L"bookshelf.json");
-    return path;
+    return GetDataDir() + L"\\bookshelf.json";
 }
 
 // GUID生成

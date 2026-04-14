@@ -1,5 +1,6 @@
 #include "navbar.h"
 #include "i18n.h"
+#include "utils.h"
 
 // Segoe Fluent Icons のコードポイント
 struct NavButtonDef {
@@ -58,11 +59,7 @@ static void RenderTextToBitmap(HDC hdcMem, HFONT hFont, const wchar_t* text, int
 #include <shlwapi.h>
 static std::wstring GetCachePath(const wchar_t* name)
 {
-    wchar_t path[MAX_PATH];
-    GetModuleFileNameW(nullptr, path, MAX_PATH);
-    PathRemoveFileSpecW(path);
-    PathAppendW(path, name);
-    return path;
+    return GetDataDir() + L"\\" + name;
 }
 
 HIMAGELIST LoadImageListCache(const wchar_t* cacheName)

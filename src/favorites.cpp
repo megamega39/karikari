@@ -6,11 +6,7 @@ static std::vector<std::wstring> g_favorites;
 
 static std::wstring GetFavoritesPath()
 {
-    wchar_t path[MAX_PATH];
-    GetModuleFileNameW(nullptr, path, MAX_PATH);
-    PathRemoveFileSpecW(path);
-    PathAppendW(path, L"favorites.json");
-    return path;
+    return GetDataDir() + L"\\favorites.json";
 }
 
 void FavoritesAdd(const std::wstring& path)
