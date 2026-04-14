@@ -118,7 +118,7 @@ bool SaveSettings(const AppSettings& s)
     json += L"  \"thumbnailSize\": " + std::to_wstring(s.thumbnailSize) + L",\n";
     json += L"  \"previewSize\": " + std::to_wstring(s.previewSize) + L",\n";
     json += L"  \"fontSize\": " + std::to_wstring(s.fontSize) + L",\n";
-    json += L"  \"treeSortMode\": \"" + s.treeSortMode + L"\",\n";
+    json += L"  \"treeSortMode\": \"" + EscapeJsonPath(s.treeSortMode) + L"\",\n";
     json += L"  \"treeSortDescending\": " + std::wstring(s.treeSortDescending ? L"true" : L"false") + L",\n";
     json += L"  \"viewMode\": " + std::to_wstring(s.viewMode) + L",\n";
     json += L"  \"isRTL\": " + std::wstring(s.isRTL ? L"true" : L"false") + L",\n";

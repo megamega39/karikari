@@ -294,7 +294,7 @@ void NavigateTo(const std::wstring& path, NavigateOptions opts)
 
         PTP_WORK work = CreateThreadpoolWork([](PTP_CALLBACK_INSTANCE, PVOID ctx, PTP_WORK work) {
             // ワーカースレッドでCOM初期化（7z.dll使用のため必須）
-            struct ComGuard { ComGuard() { CoInitializeEx(nullptr, COINIT_MULTITHREADED); } ~ComGuard() { CoUninitialize(); } } comGuard;
+            struct ComGuard { bool ok; ComGuard() : ok(SUCCEEDED(CoInitializeEx(nullptr, COINIT_MULTITHREADED))) {} ~ComGuard() { if (ok) CoUninitialize(); } } comGuard;
 
             std::unique_ptr<ArchiveLoadResult> result(static_cast<ArchiveLoadResult*>(ctx));
 
@@ -561,6 +561,11 @@ static void DisplayImageFile(int index, const std::wstring& path)
         // （非同期デコード完了前でもGetPagesPerViewが2を返すようにする）
         g_app.viewer.isSpreadActive = true;
 
+        if (index + 1 >= (int)g_app.nav.viewableFiles.size()) {
+            g_app.viewer.isSpreadActive = false;
+            ViewerLoadImageAsync(path);
+            return;
+        }
         std::wstring path2 = g_app.nav.viewableFiles[index + 1];
 
         // 書庫内の見開き
