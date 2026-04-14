@@ -1,16 +1,17 @@
 # karikari
 
-C++ + Direct2D 製の画像/動画ビューア for Windows
+Windows 向けの画像・漫画・動画ビューア。書庫ファイルをそのまま開いて漫画のように見開きで読んだり、フォルダ内の画像や動画をサクサク閲覧できます。
 
 ## 特徴
 
-- **高速描画** — Direct2D によるハードウェアアクセラレーション描画
-- **書庫対応** — ZIP / 7z / RAR / CBZ / CBR / CB7 をそのまま閲覧
-- **動画再生** — 動画・音声ファイルの再生にも対応
-- **見開き表示** — 自動 / 単独 / 見開きモード、綴じ方向切替
-- **先読み** — 次のページをバックグラウンドで先読みしてスムーズに閲覧
-- **本棚・お気に入り・履歴** — よく見るフォルダや書庫に素早くアクセス
-- **キーボードショートカット** — 自由にカスタマイズ可能
+- **漫画ビューア** — CBZ / CBR / ZIP / RAR / 7z をそのまま見開き表示。右綴じ・左綴じ切替対応で、漫画やコミックをページをめくる感覚で読める
+- **フォルダツリー** — 左側のツリービューでフォルダを自由に行き来。エクスプローラー感覚でファイルを探せる
+- **画像ビューア** — JPEG, PNG, WebP, AVIF, GIF アニメーション, TIFF など主要フォーマットに対応。GIF・WebP のアニメーション再生にも対応
+- **動画プレイヤー** — MP4, MKV, WebM などの動画もそのまま再生。速度変更・ループ・音量調節付き
+- **高速描画** — Direct2D によるGPU描画で大きな画像もなめらかに表示
+- **先読み** — 次のページをバックグラウンドで先読み。ページ送りで待たされない
+- **本棚・お気に入り・履歴** — よく見るフォルダや書庫を登録してすぐアクセス
+- **キーボードショートカット** — すべてのキーを自由にカスタマイズ可能
 - **多言語対応** — 日本語・英語
 
 ## ダウンロード
@@ -63,16 +64,17 @@ C++ + Direct2D 製の画像/動画ビューア for Windows
 
 # karikari (English)
 
-An image and video viewer for Windows, built with C++ and Direct2D.
+An image, manga, and video viewer for Windows. Open archive files and read comics in spread view, or browse images and videos in folders seamlessly.
 
 ## Features
 
-- **Fast rendering** — Hardware-accelerated drawing with Direct2D
-- **Archive support** — Browse ZIP / 7z / RAR / CBZ / CBR / CB7 directly
-- **Video playback** — Play video and audio files
-- **Spread view** — Auto / single / spread page modes with binding direction toggle
-- **Prefetch** — Background preloading for smooth browsing
-- **Bookshelf, favorites & history** — Quick access to frequently viewed folders and archives
+- **Manga reader** — Open CBZ / CBR / ZIP / RAR / 7z directly in spread view. Right-to-left and left-to-right binding for reading comics page by page
+- **Folder tree** — Browse folders freely with the tree view on the left, just like a file explorer
+- **Image viewer** — Supports JPEG, PNG, WebP, AVIF, animated GIF, TIFF and more. Animated GIF and WebP playback included
+- **Video player** — Play MP4, MKV, WebM and other video formats inline. Speed control, loop, and volume adjustment
+- **Fast rendering** — GPU-accelerated drawing with Direct2D for smooth display of large images
+- **Prefetch** — Background preloading of upcoming pages for instant page turns
+- **Bookshelf, favorites & history** — Pin frequently visited folders and archives for quick access
 - **Custom keybindings** — Fully configurable keyboard shortcuts
 - **Multilingual** — Japanese and English
 
