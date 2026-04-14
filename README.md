@@ -1,10 +1,10 @@
 # karikari
 
-Windows 向けの画像・漫画・動画ビューア。書庫ファイルをそのまま開いて漫画のように見開きで読んだり、フォルダ内の画像や動画をサクサク閲覧できます。
+Windows 向けの画像・動画ビューア。書庫ファイルをそのまま開いて見開き表示したり、フォルダ内の画像や動画をサクサク閲覧できます。
 
 ## 特徴
 
-- **漫画ビューア** — CBZ / CBR / ZIP / RAR / 7z をそのまま見開き表示。右綴じ・左綴じ切替対応で、漫画やコミックをページをめくる感覚で読める
+- **書庫対応** — CBZ / CBR / ZIP / RAR / 7z をそのまま見開き表示。右綴じ・左綴じ切替対応
 - **フォルダツリー** — 左側のツリービューでフォルダを自由に行き来。エクスプローラー感覚でファイルを探せる
 - **画像ビューア** — JPEG, PNG, WebP, AVIF, GIF アニメーション, TIFF など主要フォーマットに対応。GIF・WebP のアニメーション再生にも対応
 - **動画プレイヤー** — MP4, MKV, WebM などの動画もそのまま再生。速度変更・ループ・音量調節付き
@@ -64,11 +64,11 @@ Windows 向けの画像・漫画・動画ビューア。書庫ファイルをそ
 
 # karikari (English)
 
-An image, manga, and video viewer for Windows. Open archive files and read comics in spread view, or browse images and videos in folders seamlessly.
+An image and video viewer for Windows. Open archive files in spread view, or browse images and videos in folders seamlessly.
 
 ## Features
 
-- **Manga reader** — Open CBZ / CBR / ZIP / RAR / 7z directly in spread view. Right-to-left and left-to-right binding for reading comics page by page
+- **Archive support** — Open CBZ / CBR / ZIP / RAR / 7z directly in spread view. Right-to-left and left-to-right binding
 - **Folder tree** — Browse folders freely with the tree view on the left, just like a file explorer
 - **Image viewer** — Supports JPEG, PNG, WebP, AVIF, animated GIF, TIFF and more. Animated GIF and WebP playback included
 - **Video player** — Play MP4, MKV, WebM and other video formats inline. Speed control, loop, and volume adjustment
