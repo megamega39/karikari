@@ -856,6 +856,14 @@ void ApplyArchiveLoadResult(ArchiveLoadResult* result)
 
     if (!g_app.nav.viewableFiles.empty())
     {
+        // 見開き判定のため最初の2枚の画像サイズを先行取得
+        {
+            std::vector<std::wstring> first2;
+            first2.push_back(g_app.nav.viewableFiles[0]);
+            if (g_app.nav.viewableFiles.size() > 1)
+                first2.push_back(g_app.nav.viewableFiles[1]);
+            PreloadImageSizes(first2);
+        }
         PrefetchSetFirstLoad(); // 初回プリフェッチは少量（表紙表示優先）
         GoToFile(0);
     }

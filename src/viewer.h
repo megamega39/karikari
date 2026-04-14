@@ -44,3 +44,4 @@ struct AsyncSpreadDoneMsg {
 };
 
 void ViewerLoadSpreadAsync(const std::wstring& path1, const std::wstring& path2);
+void PreloadImageSizes(const std::vector<std::wstring>& paths); // 見開き判定用にサイズを先行取得

@@ -1452,6 +1452,30 @@ void CacheImageSize(const std::wstring& path, UINT w, UINT h)
     g_sizeCache[path] = { w, h, fc };
 }
 
+void PreloadImageSizes(const std::vector<std::wstring>& paths)
+{
+    for (auto& path : paths)
+    {
+        // 既にサイズキャッシュにあればスキップ
+        UINT w = 0, h = 0;
+        if (GetImageSize(path, w, h, true)) continue;
+
+        // 書庫内画像ならStreamCacheに先行展開
+        std::wstring arcPath, entryPath;
+        if (SplitArchivePath(path, arcPath, entryPath))
+        {
+            if (!StreamCacheGet(path))
+            {
+                std::vector<BYTE> buffer;
+                if (ExtractToMemory(arcPath, entryPath, buffer))
+                    StreamCachePut(path, std::move(buffer));
+            }
+        }
+        // サイズ取得（StreamCacheまたはファイルから）
+        GetImageSize(path, w, h, false);
+    }
+}
+
 // 縦向き判定（w/h <= spreadThreshold なら縦向き）
 // cacheOnly=true: キャッシュミス時はtrue（縦向き扱い=見開き可能）を返す
 // sizeKnown: サイズが実際に取得できたかどうかを返す（nullptrなら無視）
