@@ -108,18 +108,17 @@ static HRESULT ConvertAndOptionalResize(IWICBitmapSource* frame, ID2D1RenderTarg
     UINT imgW, imgH;
     frame->GetSize(&imgW, &imgH);
 
-    // 表示領域サイズを取得（ピクセル単位に変換、高DPI対応）
+    // 表示領域サイズを取得（DIP単位 — viewerのCalcBaseScaleと同じ座標系）
     auto rtSize = rt->GetSize();
-    float dpiX, dpiY;
-    rt->GetDpi(&dpiX, &dpiY);
-    UINT viewW = (UINT)(rtSize.width * dpiX / 96.0f);
-    UINT viewH = (UINT)(rtSize.height * dpiY / 96.0f);
+    UINT viewW = (UINT)rtSize.width;
+    UINT viewH = (UINT)rtSize.height;
 
-    // デコード時リサイズ: 元画像が表示領域の2倍以上大きい場合
+    // デコード時リサイズ: 元画像が表示領域の4倍以上大きい場合のみ（メモリ軽減目的）
     ComPtr<IWICBitmapSource> source = frame;
-    if (viewW > 0 && viewH > 0 && (imgW > viewW * 2 || imgH > viewH * 2))
+    if (viewW > 0 && viewH > 0 && (imgW > viewW * 4 || imgH > viewH * 4))
     {
-        float scale = std::min((float)viewW / imgW, (float)viewH / imgH);
+        // ダウンスケール先はview×2（ズーム時の品質確保）
+        float scale = std::min((float)(viewW * 2) / imgW, (float)(viewH * 2) / imgH);
         UINT dstW = std::max(1U, (UINT)(imgW * scale));
         UINT dstH = std::max(1U, (UINT)(imgH * scale));
 
@@ -214,18 +213,13 @@ static HRESULT DecodeFrameToWicBitmap(IWICBitmapSource* frame, IWICImagingFactor
 
     if (imgW > 0 && imgH > 0)
     {
-        // DIP → ピクセル変換（高DPI対応）
-        float dpiScale = 1.0f;
-        if (g_app.viewer.deviceContext) {
-            float dx, dy;
-            g_app.viewer.deviceContext->GetDpi(&dx, &dy);
-            dpiScale = dx / 96.0f;
-        }
-        UINT viewW = (UINT)(g_app.viewer.cachedViewW.load(std::memory_order_relaxed) * dpiScale);
-        UINT viewH = (UINT)(g_app.viewer.cachedViewH.load(std::memory_order_relaxed) * dpiScale);
-        if (viewW > 0 && viewH > 0 && (imgW > viewW * 2 || imgH > viewH * 2))
+        // cachedViewW/Hはピクセル単位（window.cppで設定）、そのまま使用
+        UINT viewW = g_app.viewer.cachedViewW.load(std::memory_order_relaxed);
+        UINT viewH = g_app.viewer.cachedViewH.load(std::memory_order_relaxed);
+        if (viewW > 0 && viewH > 0 && (imgW > viewW * 4 || imgH > viewH * 4))
         {
-            float scale = std::min((float)viewW / imgW, (float)viewH / imgH);
+            // ダウンスケール先はview×2（ズーム時の品質確保）
+            float scale = std::min((float)(viewW * 2) / imgW, (float)(viewH * 2) / imgH);
             UINT dstW = std::max(1U, (UINT)(imgW * scale));
             UINT dstH = std::max(1U, (UINT)(imgH * scale));
 
