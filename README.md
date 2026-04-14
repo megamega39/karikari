@@ -2,6 +2,8 @@
 
 Windows 向けの画像・動画・音声ビューア。ツリービューでフォルダや書庫を直感的に操作しながら、画像や動画をサクサク閲覧できます。
 
+![karikari screenshot](sample.png)
+
 ## 特徴
 
 - **書庫対応** — CBZ / CBR / ZIP / RAR / 7z をそのまま見開き表示。右綴じ・左綴じ切替対応
@@ -65,6 +67,8 @@ Windows 向けの画像・動画・音声ビューア。ツリービューでフ
 # karikari (English)
 
 An image, video, and audio viewer for Windows. Navigate folders and archives intuitively with the tree view, and browse images and videos seamlessly.
+
+![karikari screenshot](sample.png)
 
 ## Features
 
