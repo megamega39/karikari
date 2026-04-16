@@ -325,3 +325,19 @@
 - **LOW**: navbar.cpp IStream生ポインタ→ComPtrに変更（RAII化）
 - **LOW**: window.cpp/help.cpp の(LPWSTR)キャストに安全性コメント追加
 - **設計判断**: ShellExecuteExWはSEE_MASK_ASYNCOKフラグで非同期実行。SHOpenFolderAndSelectItemsはPIDL方式でファイルパスのメタ文字問題を回避。g_tempMediaFileはstaticではなく外部リンケージにしてnav.cppからextern参照
+
+## 2026-04-16: Google Test 自動テスト導入
+- Google Test (v1.15.2) を FetchContent で導入。`BUILD_TESTS=ON` で有効化
+- **164テスト、全パス**
+- テスト対象モジュール:
+  - **utils.h**: EnsureTrailingSlash, StripTrailingSlash, PathBaseName, ToLowerW, HasExtension
+  - **JSON解析**: EscapeJsonPath/UnescapeJsonPath（ラウンドトリップ含む）、JsonGetInt/Bool/String/Float/IntArray
+  - **archive_utils.h**: IsValidEntryPath（パストラバーサル攻撃16パターン）、NormalizeArchivePath
+  - **file_utils.h**: FormatFileSize（境界値テスト）、IsImageFile（全10拡張子）、IsArchiveFile（全6拡張子）
+  - **nav_utils.h**: ResolveNavIndex（ラップ有効/無効、エッジケース）
+  - **settings**: KeyComboToString、KeyBindingToString、FindAction、InitDefaultKeyBindings
+- 新規ヘッダ作成（static関数の抽出）:
+  - `src/archive_utils.h`: IsValidEntryPath, NormalizePath を inline 化（セキュリティ上重要なためテスト必須）
+  - `src/nav_utils.h`: ResolveNavIndex を純粋関数化（グローバル状態から分離）
+  - `src/file_utils.h`: FormatFileSize, IsImageFile, IsArchiveFile を inline 化
+- **設計判断**: settings.cpp は依存が重い（i18n, cache, nav等）ため、テスト用にロジックだけ抽出した `tests/settings_testable.cpp` を作成。本体コードの重複ではなくテスト環境の独立性を優先

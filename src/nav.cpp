@@ -471,6 +471,9 @@ static void ExitMediaMode()
     }
 }
 
+// インデックス解決の純粋ロジック（nav_utils.h に抽出済み）
+#include "nav_utils.h"
+
 static int ResolveIndex(int index, int total)
 {
     // ループナビゲーション（wrapNavigation 設定に従う）
@@ -482,16 +485,7 @@ static int ResolveIndex(int index, int total)
         g_navWrapLoaded = true;
     }
 
-    if (g_navWrap)
-    {
-        if (index < 0) index = total - 1;
-        if (index >= total) index = 0;
-    }
-    else
-    {
-        if (index < 0 || index >= total) return -1; // 範囲外はスキップ
-    }
-    return index;
+    return ResolveNavIndex(index, total, g_navWrap);
 }
 
 static void PlayMediaFile(int index, const std::wstring& path)

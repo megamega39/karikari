@@ -1,4 +1,5 @@
 #include "archive.h"
+#include "archive_utils.h"
 #include "utils.h"
 #include <shlwapi.h>
 #include <objbase.h>
@@ -100,7 +101,7 @@ struct CachedArchiveHandle {
 static constexpr int kMaxArchiveCache = 3;
 
 static std::wstring NormalizePath(const std::wstring& p); // 前方宣言
-static bool IsValidEntryPath(const std::wstring& path); // 前方宣言
+// IsValidEntryPath は archive_utils.h で inline 定義済み
 
 // === エントリリストのディスクキャッシュ ===
 #include "utils.h"
@@ -196,17 +197,9 @@ static std::timed_mutex g_archiveMutex;
 // 現在アクティブなキャッシュへのポインタ（GetCachedArchive で設定）
 static CachedArchiveHandle* g_currentHandle = nullptr;
 
-static void NormalizePathInPlace(std::wstring& p)
-{
-    for (auto& c : p) { if (c == L'/') c = L'\\'; c = towlower(c); }
-}
-
-static std::wstring NormalizePath(const std::wstring& p)
-{
-    std::wstring r = p;
-    NormalizePathInPlace(r);
-    return r;
-}
+// パス正規化（archive_utils.h に抽出済み）
+static void NormalizePathInPlace(std::wstring& p) { NormalizeArchivePathInPlace(p); }
+static std::wstring NormalizePath(const std::wstring& p) { return NormalizeArchivePath(p); }
 
 // === IInStream 実装 ===
 class FileInStream : public IInStream {
@@ -415,21 +408,7 @@ public:
     STDMETHOD(SetOperationResult)(Int32) override { return S_OK; }
 };
 
-// パストラバーサル検証（書庫エントリのセキュリティチェック）
-static bool IsValidEntryPath(const std::wstring& path)
-{
-    if (path.find(L"..\\") != std::wstring::npos) return false;
-    if (path.find(L"../") != std::wstring::npos) return false;
-    if (path == L"..") return false;
-    // 末尾が /.. or \.. で終わるケース
-    if (path.size() >= 3) {
-        auto tail = path.substr(path.size() - 3);
-        if (tail == L"\\.." || tail == L"/..") return false;
-    }
-    if (path.size() >= 2 && path[1] == L':') return false; // 絶対パス
-    if (!path.empty() && (path[0] == L'\\' || path[0] == L'/')) return false;
-    return true;
-}
+// パストラバーサル検証（archive_utils.h に抽出済み、先頭でinclude）
 
 // === ヘルパー ===
 // ファイル先頭のマジックバイトで RAR5 かどうか判定

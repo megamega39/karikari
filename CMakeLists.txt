@@ -75,3 +75,42 @@ add_custom_command(TARGET karikari POST_BUILD
         "${CMAKE_SOURCE_DIR}/third_party/libmpv-2.dll"
         "$<TARGET_FILE_DIR:karikari>/libmpv-2.dll"
 )
+
+# === テスト ===
+option(BUILD_TESTS "Build unit tests" OFF)
+
+if(BUILD_TESTS)
+    enable_testing()
+    include(FetchContent)
+    FetchContent_Declare(
+        googletest
+        GIT_REPOSITORY https://github.com/google/googletest.git
+        GIT_TAG v1.15.2
+    )
+    set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
+    FetchContent_MakeAvailable(googletest)
+
+    add_executable(karikari_tests
+        tests/test_main.cpp
+        tests/test_utils.cpp
+        tests/test_json.cpp
+        tests/test_archive_utils.cpp
+        tests/test_filelist.cpp
+        tests/test_nav.cpp
+        tests/test_settings.cpp
+        tests/settings_testable.cpp
+    )
+    target_include_directories(karikari_tests PRIVATE src/)
+    target_compile_definitions(karikari_tests PRIVATE UNICODE _UNICODE)
+    target_compile_options(karikari_tests PRIVATE /utf-8 /W4 /EHsc)
+    target_link_libraries(karikari_tests PRIVATE
+        GTest::gtest_main
+        shlwapi
+        ole32
+        shell32
+        comctl32
+    )
+
+    include(GoogleTest)
+    gtest_discover_tests(karikari_tests)
+endif()
