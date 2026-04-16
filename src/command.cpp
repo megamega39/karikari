@@ -245,7 +245,7 @@ void HandleCommand(HWND hwnd, UINT cmd)
         if (sortCmd >= 2510 && sortCmd <= 2513)
         {
             TreeSortMode newMode = (TreeSortMode)(sortCmd - 2510);
-            bool newDesc = (curMode == newMode) ? !curDesc : false; // 同じモード→方向反転
+            bool newDesc = (curMode == newMode) ? !curDesc : curDesc; // 同じモード→方向反転、異なるモード→現在の方向を維持
             SetTreeSortMode(newMode, newDesc);
             // 設定保存
             AppSettings s; LoadSettings(s);

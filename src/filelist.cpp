@@ -324,7 +324,6 @@ void SortFileList(int column)
     else
     {
         g_sortColumn = column;
-        g_sortAscending = true;
     }
 
     std::sort(g_app.nav.fileItems.begin(), g_app.nav.fileItems.end(),
