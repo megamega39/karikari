@@ -1,8 +1,8 @@
 ; karikari Inno Setup Script
-; v1.0.1
+; v1.1.0
 
 #define MyAppName "karikari"
-#define MyAppVersion "1.0.1"
+#define MyAppVersion "1.1.0"
 #define MyAppPublisher "megamega39"
 #define MyAppURL "https://github.com/megamega39/karikari"
 #define MyAppExeName "karikari.exe"
