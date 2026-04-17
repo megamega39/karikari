@@ -1,3 +1,6 @@
+# winget manifests (作業用、リポジトリには含めない)
+winget-manifests/
+
 # CMake およびビルド生成物
 build/
 out/
