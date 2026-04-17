@@ -247,9 +247,14 @@ void LayoutChildren(HWND hwndParent)
         int rightW = 0;
         if (g_app.wnd.hwndNavBarRight)
         {
-            // 右ツールバーのボタン数×ボタン幅
+            // 右ツールバーの幅を実測（セパレータ有無やボタン数に依存しない）
             int btnCount = (int)SendMessageW(g_app.wnd.hwndNavBarRight, TB_BUTTONCOUNT, 0, 0);
-            rightW = btnCount * 48;
+            if (btnCount > 0)
+            {
+                RECT rc = {};
+                if (SendMessageW(g_app.wnd.hwndNavBarRight, TB_GETITEMRECT, btnCount - 1, (LPARAM)&rc))
+                    rightW = rc.right + 4;
+            }
             MoveWindow(g_app.wnd.hwndNavBarRight, clientW - rightW, y, rightW, kNavBarH, TRUE);
         }
         MoveWindow(g_app.wnd.hwndNavBar, 0, y, clientW - rightW, kNavBarH, TRUE);
@@ -259,18 +264,34 @@ void LayoutChildren(HWND hwndParent)
     // アドレスバー
     if (g_app.wnd.hwndAddressLabel)
     {
-        LayoutAddressBar(0, y, clientW, kAddrBarH);
-        y += kAddrBarH;
+        if (g_app.showBars)
+        {
+            SetAddressBarVisible(true);
+            LayoutAddressBar(0, y, clientW, kAddrBarH);
+            y += kAddrBarH;
+        }
+        else
+        {
+            SetAddressBarVisible(false);
+        }
     }
 
     // ステータスバー
     int statusBarH = 0;
     if (g_app.wnd.hwndStatusBar)
     {
-        SendMessageW(g_app.wnd.hwndStatusBar, WM_SIZE, 0, 0);
-        RECT sbrc;
-        GetWindowRect(g_app.wnd.hwndStatusBar, &sbrc);
-        statusBarH = sbrc.bottom - sbrc.top;
+        if (g_app.showBars)
+        {
+            ShowWindow(g_app.wnd.hwndStatusBar, SW_SHOW);
+            SendMessageW(g_app.wnd.hwndStatusBar, WM_SIZE, 0, 0);
+            RECT sbrc;
+            GetWindowRect(g_app.wnd.hwndStatusBar, &sbrc);
+            statusBarH = sbrc.bottom - sbrc.top;
+        }
+        else
+        {
+            ShowWindow(g_app.wnd.hwndStatusBar, SW_HIDE);
+        }
     }
 
     // メイン領域
@@ -375,26 +396,36 @@ void LayoutChildren(HWND hwndParent)
     auto GetToolbarWidth = [](HWND tb) -> int {
         int count = (int)SendMessageW(tb, TB_BUTTONCOUNT, 0, 0);
         if (count <= 0) return 200;
-        RECT rc;
-        SendMessageW(tb, TB_GETITEMRECT, count - 1, (LPARAM)&rc);
+        RECT rc = {};
+        if (!SendMessageW(tb, TB_GETITEMRECT, count - 1, (LPARAM)&rc))
+            return 200;
         return rc.right + 4;
     };
 
-    if (g_app.wnd.hwndViewerTbLeft)
+    if (g_app.showBars)
     {
-        ShowWindow(g_app.wnd.hwndViewerTbLeft, SW_SHOW);
-        int lbW = GetToolbarWidth(g_app.wnd.hwndViewerTbLeft);
-        MoveWindow(g_app.wnd.hwndViewerTbLeft, rightX, mainY, lbW, kViewerToolbarH, TRUE);
+        if (g_app.wnd.hwndViewerTbLeft)
+        {
+            ShowWindow(g_app.wnd.hwndViewerTbLeft, SW_SHOW);
+            int lbW = GetToolbarWidth(g_app.wnd.hwndViewerTbLeft);
+            MoveWindow(g_app.wnd.hwndViewerTbLeft, rightX, mainY, lbW, kViewerToolbarH, TRUE);
+        }
+        if (g_app.wnd.hwndViewerTbRight)
+        {
+            ShowWindow(g_app.wnd.hwndViewerTbRight, SW_SHOW);
+            int rbW = GetToolbarWidth(g_app.wnd.hwndViewerTbRight);
+            MoveWindow(g_app.wnd.hwndViewerTbRight, rightX + rightW - rbW, mainY, rbW, kViewerToolbarH, TRUE);
+        }
     }
-    if (g_app.wnd.hwndViewerTbRight)
+    else
     {
-        ShowWindow(g_app.wnd.hwndViewerTbRight, SW_SHOW);
-        int rbW = GetToolbarWidth(g_app.wnd.hwndViewerTbRight);
-        MoveWindow(g_app.wnd.hwndViewerTbRight, rightX + rightW - rbW, mainY, rbW, kViewerToolbarH, TRUE);
+        if (g_app.wnd.hwndViewerTbLeft)  ShowWindow(g_app.wnd.hwndViewerTbLeft,  SW_HIDE);
+        if (g_app.wnd.hwndViewerTbRight) ShowWindow(g_app.wnd.hwndViewerTbRight, SW_HIDE);
     }
 
-    int contentY = mainY + kViewerToolbarH;
-    int contentH = mainH - kViewerToolbarH;
+    int viewerToolbarOffset = g_app.showBars ? kViewerToolbarH : 0;
+    int contentY = mainY + viewerToolbarOffset;
+    int contentH = mainH - viewerToolbarOffset;
 
     if (g_app.nav.isMediaMode)
     {
@@ -595,7 +626,8 @@ static void HandleNotify(HWND hwnd, LPNMHDR pnm)
         return label;
     };
 
-    if (pnm->hwndFrom == g_app.wnd.hwndNavBar && pnm->code == TBN_GETINFOTIPW)
+    if ((pnm->hwndFrom == g_app.wnd.hwndNavBar || pnm->hwndFrom == g_app.wnd.hwndNavBarRight)
+        && pnm->code == TBN_GETINFOTIPW)
     {
         auto* tip = (LPNMTBGETINFOTIPW)pnm;
         std::wstring s;
@@ -612,6 +644,7 @@ static void HandleNotify(HWND hwnd, LPNMHDR pnm)
         case IDM_NAV_HOVER:     s = TipWithKey(I18nGet(L"nav.hover"), L"hover_preview"); break;
         case IDM_NAV_SETTINGS:  s = TipWithKey(I18nGet(L"ui.settings"), L"settings"); break;
         case IDM_NAV_HELP:      s = TipWithKey(I18nGet(L"ui.help"), L"help"); break;
+        case IDM_NAV_TOGGLE_BARS: s = TipWithKey(I18nGet(L"nav.toggle_bars"), L"toggle_bars"); break;
         }
         if (!s.empty() && tip->pszText && tip->cchTextMax > 0)
             wcsncpy_s(tip->pszText, tip->cchTextMax, s.c_str(), _TRUNCATE);

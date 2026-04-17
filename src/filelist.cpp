@@ -277,6 +277,12 @@ void PopulateListView()
         return;
     }
 
+    // 選択状態をクリア（書庫→フォルダ切替時にハイライトが残る問題を防止）
+    LVITEMW clearState = {};
+    clearState.stateMask = LVIS_SELECTED | LVIS_FOCUSED;
+    clearState.state = 0;
+    SendMessageW(hwnd, LVM_SETITEMSTATE, (WPARAM)-1, (LPARAM)&clearState);
+
     // LVS_OWNERDATA: アイテム数を設定するだけ（データは LVN_GETDISPINFOW で返す）
     SendMessageW(hwnd, LVM_SETITEMCOUNT, (WPARAM)g_app.nav.fileItems.size(), LVSICF_NOINVALIDATEALL);
     InvalidateRect(hwnd, nullptr, TRUE);

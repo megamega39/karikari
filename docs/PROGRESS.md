@@ -1,5 +1,37 @@
 # 開発進捗メモ
 
+## 2026-04-17: 3バー表示切替を1ボタンに統合
+- 直前に実装した 3 つの独立トグル（アドレスバー / ビューアーツールバー / ステータスバー）を 1 ボタンに統合
+- コマンド ID: `IDM_NAV_TOGGLE_ADDRESSBAR/VIEWERBAR/STATUSBAR` → `IDM_NAV_TOGGLE_BARS`
+- 状態フラグ: `showAddressBar/showViewerToolbar/showStatusBar` → `showBars` 単一 bool
+- アイコン: `\uE740` (FullScreen) — 「バーを隠して画像を広く見る」イメージ
+- 設定キーも 1 つに統合: `settings.json` の `showBars`
+- 設計判断: ユーザー要望が「細かい個別制御」から「画面を広くするボタン」にシフト。3 ボタンは過剰だったため単純化
+- 気づき: ボタン数が変わると `navbar_right.cache` のイメージ数期待値と不一致となり、自動再生成される（前回仕込んだ仕組みが機能）
+
+## 2026-04-17: ステータスバー表示切替ボタン追加（後に統合）
+- 一度 3 つ目のトグルボタンとして実装したが、上記で 1 ボタンに統合
+
+## 2026-04-17: プレビューツールバー/アドレスバー表示切替ボタン追加（後に統合）
+- ナビバー右側に 2 つのトグルボタンを追加（アドレスバー用、プレビューツールバー用）
+  - `IDM_NAV_TOGGLE_ADDRESSBAR` (211) / `IDM_NAV_TOGGLE_VIEWERBAR` (212)
+  - アイコン: Segoe Fluent Icons `\uE756` (Type) / `\uE8B7` (Tools)
+  - 設計判断: 押下=非表示の直感設計（押されている＝隠している状態）
+  - 2ボタンで独立制御できるようにした（ユーザー要望）
+- レイアウト: `LayoutChildren` でフラグに応じて高さをスキップ
+  - アドレスバー: `g_app.showAddressBar` が false なら `y` 加算をスキップ＋`SetAddressBarVisible(false)`
+  - ビューアーツールバー: `viewerToolbarOffset = showViewerToolbar ? kViewerToolbarH : 0`
+- 永続化: `settings.json` に `showAddressBar` / `showViewerToolbar` を追加
+  - 起動時 (`main.cpp`) に `g_app` へ反映
+- 右ナビバーがセパレータ非対応だったので、`CreateRightIconImageList` でセパレータをスキップ、`CreateNavBarRight` で `BTNS_SEP` 対応
+- キャッシュ数が期待値と異なるとき `navbar_right.cache` を再生成（ボタン数変更に追従）
+- ツールチップハンドラの条件を `hwndNavBar || hwndNavBarRight` に拡張（以前は右バーのツールチップが効いていなかった）
+- 気づき: `g_breadcrumb` が `addressbar.cpp` 内の static だったので、可視性制御用に公開関数 `SetAddressBarVisible` を追加
+
+## 2026-04-16: 書庫→フォルダ切替時のListViewハイライト残りを修正
+- 書庫読み込み後にツリービューでフォルダをクリックすると、ファイルリストにハイライトが残るバグを修正
+- `PopulateListView()` でアイテム数更新前に `LVM_SETITEMSTATE` で全選択状態をクリアするよう変更
+
 ## 2026-04-16: ソート種別変更時の昇順リセットを修正
 - ファイルリストのソート列を変更すると昇順にリセットされるバグを修正
 - `filelist.cpp` の `SortFileList` 関数で、列変更時に `g_sortAscending = true` を設定していた行を削除

@@ -30,6 +30,7 @@ struct AppSettings {
     int scaleMode = 0;                    // 0=FitWindow, 1=FitWidth, 2=FitHeight, 3=Original
     std::vector<int> columnOrder;         // ファイルリスト列順序（空=デフォルト）
     std::vector<int> columnWidths;        // ファイルリスト列幅（空=デフォルト）
+    bool showBars = true;                 // 3 バー一括表示（アドレス/ツール/ステータス）
 };
 
 // 単一キーコンビネーション

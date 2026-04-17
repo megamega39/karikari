@@ -293,6 +293,17 @@ void LayoutAddressBar(int x, int y, int w, int h)
         MoveWindow(g_app.wnd.hwndAddressEdit, x + labelW, y + 2, w - labelW - 4, h - 4, TRUE);
 }
 
+void SetAddressBarVisible(bool visible)
+{
+    int cmd = visible ? SW_SHOW : SW_HIDE;
+    if (g_app.wnd.hwndAddressLabel) ShowWindow(g_app.wnd.hwndAddressLabel, cmd);
+    if (g_breadcrumb)               ShowWindow(g_breadcrumb, cmd);
+    // hwndAddressEdit は通常非表示で、breadcrumb クリック時のみ表示される。
+    // トグル時は編集モードを必ず閉じて breadcrumb モードに戻す。
+    if (g_app.wnd.hwndAddressEdit)
+        ShowWindow(g_app.wnd.hwndAddressEdit, SW_HIDE);
+}
+
 void UpdateAddressBar(const std::wstring& path)
 {
     g_currentAddrPath = path;

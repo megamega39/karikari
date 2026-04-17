@@ -55,6 +55,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int nCmdShow)
         I18nInit(startupSettings.language.empty() ? L"ja" : startupSettings.language);
         CacheInit((size_t)startupSettings.cacheSizeMB * 1024 * 1024,
                   std::max(10, startupSettings.cacheSizeMB / 3));
+        g_app.showBars = startupSettings.showBars;
     }
 
     LoadKeyBindings(); // ショートカットキー読み込み（デフォルト初期化含む）

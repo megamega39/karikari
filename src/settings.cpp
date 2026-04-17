@@ -73,6 +73,7 @@ bool LoadSettings(AppSettings& s)
     JsonGetInt(json, L"scaleMode", s.scaleMode);
     JsonGetIntArray(json, L"columnOrder", s.columnOrder);
     JsonGetIntArray(json, L"columnWidths", s.columnWidths);
+    JsonGetBool(json, L"showBars", s.showBars);
 
     // 設定値の範囲クランプ
     s.prefetchCount = std::max(1, std::min(s.prefetchCount, 50));
@@ -140,7 +141,9 @@ bool SaveSettings(const AppSettings& s)
         if (i > 0) json += L",";
         json += std::to_wstring(s.columnWidths[i]);
     }
-    json += L"]\n";
+    json += L"],\n";
+
+    json += L"  \"showBars\": " + std::wstring(s.showBars ? L"true" : L"false") + L"\n";
 
     json += L"}\n";
 
@@ -228,6 +231,7 @@ void InitDefaultKeyBindings()
     Add(L"view_cycle",     L"表示モード切替",    { K('V') });
     Add(L"bind_ltr",       L"左綴じ",            { K('L') });
     Add(L"bind_rtl",       L"右綴じ",            { K('R') });
+    Add(L"toggle_bars",    L"バーを隠して広く表示", { K('T') });
 }
 
 static std::wstring VkToString(UINT vk)
@@ -430,18 +434,34 @@ static void ShowTabPage(int tabIndex)
     for (auto h : g_shortcutControls) ShowWindow(h, tabIndex == 1 ? SW_SHOW : SW_HIDE);
 }
 
+static std::wstring I18nKeyForAction(const std::wstring& action)
+{
+    // 既存 i18n キーが action 名と不一致の分を調整
+    if (action == L"original_size")   return L"kb.original";
+    if (action == L"toggle_binding")  return L"kb.binding";
+    if (action == L"rotate_cw")       return L"kb.rotate";
+    if (action == L"toggle_bars")     return L"nav.toggle_bars";
+    return L"kb." + action;
+}
+
 static void PopulateKeyList()
 {
     if (!g_hKeyList) return;
     int prevSel = (int)SendMessageW(g_hKeyList, LVM_GETNEXTITEM, (WPARAM)-1, LVNI_SELECTED);
+
+    SendMessageW(g_hKeyList, WM_SETREDRAW, FALSE, 0);
     SendMessageW(g_hKeyList, LVM_DELETEALLITEMS, 0, 0);
     auto& bindings = GetKeyBindings();
+    std::vector<std::wstring> labelBuf(bindings.size());
     for (int i = 0; i < (int)bindings.size(); i++)
     {
+        labelBuf[i] = I18nGet(I18nKeyForAction(bindings[i].action));
+        if (labelBuf[i].empty()) labelBuf[i] = bindings[i].label;
+
         LVITEMW lvi = {};
         lvi.mask = LVIF_TEXT;
         lvi.iItem = i;
-        lvi.pszText = (LPWSTR)bindings[i].label.c_str();
+        lvi.pszText = (LPWSTR)labelBuf[i].c_str();
         SendMessageW(g_hKeyList, LVM_INSERTITEMW, 0, (LPARAM)&lvi);
 
         std::wstring keyStr = KeyBindingToString(bindings[i]);
@@ -449,12 +469,15 @@ static void PopulateKeyList()
         lvi.pszText = (LPWSTR)keyStr.c_str();
         SendMessageW(g_hKeyList, LVM_SETITEMTEXTW, i, (LPARAM)&lvi);
     }
-    // 選択を復元
+    // 選択を復元（スクロールは再描画後に行う）
     if (prevSel >= 0 && prevSel < (int)bindings.size())
-    {
         ListView_SetItemState(g_hKeyList, prevSel, LVIS_SELECTED | LVIS_FOCUSED, LVIS_SELECTED | LVIS_FOCUSED);
+
+    SendMessageW(g_hKeyList, WM_SETREDRAW, TRUE, 0);
+    RedrawWindow(g_hKeyList, NULL, NULL, RDW_INVALIDATE | RDW_ERASE | RDW_UPDATENOW);
+
+    if (prevSel >= 0 && prevSel < (int)bindings.size())
         ListView_EnsureVisible(g_hKeyList, prevSel, FALSE);
-    }
 }
 
 // キー入力待ちダイアログ — キャプチャした KeyCombo を GWLP_USERDATA に格納
@@ -534,8 +557,13 @@ static bool ShowKeyCaptureDialog(HWND hParent, KeyCombo& kc)
         DispatchMessageW(&msg);
     }
 
-    EnableWindow(hParent, TRUE);
-    SetForegroundWindow(hParent);
+    if (IsWindow(hParent))
+    {
+        EnableWindow(hParent, TRUE);
+        SetForegroundWindow(hParent);
+        InvalidateRect(hParent, NULL, TRUE);
+        UpdateWindow(hParent);
+    }
     return kc.vk != 0;
 }
 
@@ -811,7 +839,7 @@ void ShowSettingsDialog(HWND hwndParent)
 
     // === 一般タブ ===
     GL(MkLabel(hDlg, tx, ty + 2, S(120), lh, L"Language"));
-    GL(MkCombo(hDlg, editX, ty, editW, S(300), IDC_LANG_COMBO));
+    GL(MkCombo(hDlg, editX, ty, S(180), S(300), IDC_LANG_COMBO));
     ty += S(30);
 
     GL(MkLabel(hDlg, tx, ty, S(200), lh, I18nGet(L"settings.nav").c_str(), true));
