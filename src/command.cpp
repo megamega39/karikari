@@ -197,6 +197,18 @@ void HandleCommand(HWND hwnd, UINT cmd)
         break;
     }
 
+    // バー一括表示切替（アドレス/ツール/ステータス）
+    case IDM_NAV_TOGGLE_BARS:
+    {
+        g_app.showBars = !g_app.showBars;
+        RECT rc; GetClientRect(g_app.wnd.hwndMain, &rc);
+        SendMessageW(g_app.wnd.hwndMain, WM_SIZE, 0, MAKELPARAM(rc.right, rc.bottom));
+        AppSettings ss = GetCachedSettings();
+        ss.showBars = g_app.showBars;
+        SaveSettings(ss);
+        break;
+    }
+
     // 設定 / ヘルプ
     case IDM_NAV_SETTINGS: ShowSettingsDialog(hwnd); break;
     case IDM_NAV_HELP:
@@ -450,6 +462,7 @@ static void ExecuteAction(HWND hwnd, const std::wstring& action, HWND focused)
     else if (action == L"grid_view")      HandleCommand(hwnd, IDM_NAV_GRID);
     else if (action == L"hover_preview")  HandleCommand(hwnd, IDM_NAV_HOVER);
     else if (action == L"settings")       HandleCommand(hwnd, IDM_NAV_SETTINGS);
+    else if (action == L"toggle_bars")    HandleCommand(hwnd, IDM_NAV_TOGGLE_BARS);
 }
 
 void HandleKeyDown(HWND hwnd, WPARAM vk)

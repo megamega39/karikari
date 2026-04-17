@@ -51,6 +51,7 @@ enum NavCommand : UINT {
     IDM_NAV_GRID,
     IDM_NAV_SETTINGS,
     IDM_NAV_HELP,
+    IDM_NAV_TOGGLE_BARS,
     IDM_TREE_SORT = 250,
     IDM_BOOKSHELF_CLEAR = 251,
     IDM_BOOKSHELF_SORT = 252,
@@ -232,6 +233,7 @@ struct AppState {
     bool suppressListNotify = false; // LVN_ITEMCHANGED 再入防止
     bool hoverPreviewEnabled = false; // ホバープレビュー有効
     HWND hwndHoverPreview = nullptr;  // ホバープレビューウィンドウ
+    bool showBars = true;             // アドレス/ツール/ステータス 3 バー一括表示
     bool isFullscreen = false;
     LONG savedStyle = 0;
     LONG savedExStyle = 0;

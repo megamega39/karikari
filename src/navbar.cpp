@@ -24,8 +24,9 @@ static const NavButtonDef kNavButtons[] = {
 
 // 右端に配置するボタン
 static const NavButtonDef kNavButtonsRight[] = {
-    { IDM_NAV_SETTINGS,  L"\uE713", L"設定" },
-    { IDM_NAV_HELP,      L"\uE897", L"ヘルプ" },
+    { IDM_NAV_TOGGLE_BARS, L"\uE740", L"バーを隠して広く表示" },
+    { IDM_NAV_SETTINGS,    L"\uE713", L"設定" },
+    { IDM_NAV_HELP,        L"\uE897", L"ヘルプ" },
 };
 
 // 32bitビットマップに正しいアルファ付きテキストを描画するヘルパー
@@ -246,8 +247,11 @@ HWND CreateNavBar(HWND parent, HINSTANCE hInst)
 
 static HIMAGELIST CreateRightIconImageList(int cx, int cy)
 {
+    int expectedCount = 0;
+    for (auto& b : kNavButtonsRight) if (b.icon) expectedCount++;
+
     HIMAGELIST cached = LoadImageListCache(L"navbar_right.cache");
-    if (cached && ImageList_GetImageCount(cached) > 0) return cached;
+    if (cached && ImageList_GetImageCount(cached) == expectedCount) return cached;
     if (cached) ImageList_Destroy(cached);
 
     HIMAGELIST hil = ImageList_Create(cx, cy, ILC_COLOR32, 4, 2);
@@ -263,6 +267,7 @@ static HIMAGELIST CreateRightIconImageList(int cx, int cy)
     HDC hdcMem = CreateCompatibleDC(hdcScreen);
     for (auto& btn : kNavButtonsRight)
     {
+        if (!btn.icon) continue; // セパレータはスキップ
         BITMAPINFO bmi = {};
         bmi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
         bmi.bmiHeader.biWidth = cx;
@@ -305,10 +310,18 @@ HWND CreateNavBarRight(HWND parent, HINSTANCE hInst)
     for (auto& def : kNavButtonsRight)
     {
         TBBUTTON tb = {};
-        tb.iBitmap = imgIndex++;
-        tb.idCommand = def.cmd;
-        tb.fsState = TBSTATE_ENABLED;
-        tb.fsStyle = BTNS_BUTTON;
+        if (!def.icon)
+        {
+            tb.fsStyle = BTNS_SEP;
+            tb.iBitmap = 12;
+        }
+        else
+        {
+            tb.iBitmap = imgIndex++;
+            tb.idCommand = def.cmd;
+            tb.fsState = TBSTATE_ENABLED;
+            tb.fsStyle = BTNS_BUTTON;
+        }
         SendMessageW(hwnd, TB_ADDBUTTONS, 1, (LPARAM)&tb);
     }
 
