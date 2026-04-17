@@ -18,7 +18,15 @@ Windows 向けの画像・動画・音声ビューア。ツリービューでフ
 
 ## ダウンロード
 
-[最新リリース](https://github.com/megamega39/karikari/releases/latest)からダウンロードできます。
+### winget（推奨）
+
+```
+winget install megamega39.karikari
+```
+
+### 手動ダウンロード
+
+[最新リリース](https://github.com/megamega39/karikari/releases/latest)から入手できます。
 
 | ファイル | 説明 |
 |---------|------|
