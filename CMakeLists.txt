@@ -4,6 +4,9 @@ project(karikari LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# VC ランタイムを静的リンク（VCRedist 不要にする）
+set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+
 add_executable(karikari WIN32
     src/main.cpp
     src/window.cpp
@@ -87,7 +90,7 @@ if(BUILD_TESTS)
         GIT_REPOSITORY https://github.com/google/googletest.git
         GIT_TAG v1.15.2
     )
-    set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
+    set(gtest_force_shared_crt OFF CACHE BOOL "" FORCE)
     FetchContent_MakeAvailable(googletest)
 
     add_executable(karikari_tests

@@ -1,6 +1,6 @@
 #pragma once
 
-#define KARIKARI_VERSION L"1.1.2"
+#define KARIKARI_VERSION L"1.1.3"
 
 #ifndef UNICODE
 #define UNICODE
