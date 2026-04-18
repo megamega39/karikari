@@ -1,8 +1,8 @@
 ; karikari Inno Setup Script
-; v1.1.1
+; v1.1.2
 
 #define MyAppName "karikari"
-#define MyAppVersion "1.1.1"
+#define MyAppVersion "1.1.2"
 #define MyAppPublisher "megamega39"
 #define MyAppURL "https://github.com/megamega39/karikari"
 #define MyAppExeName "karikari.exe"
@@ -36,7 +36,7 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 [Files]
 Source: "..\build\Release\karikari.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\third_party\libmpv-2.dll"; DestDir: "{app}"; Flags: ignoreversion
-Source: "C:\Program Files\7-Zip\7z.dll"; DestDir: "{app}"; Flags: ignoreversion external
+Source: "..\third_party\7z.dll"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
