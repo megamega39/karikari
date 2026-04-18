@@ -1,8 +1,8 @@
 ; karikari Inno Setup Script
-; v1.1.0
+; v1.1.1
 
 #define MyAppName "karikari"
-#define MyAppVersion "1.1.0"
+#define MyAppVersion "1.1.1"
 #define MyAppPublisher "megamega39"
 #define MyAppURL "https://github.com/megamega39/karikari"
 #define MyAppExeName "karikari.exe"
@@ -25,7 +25,6 @@ ArchitecturesInstallIn64BitMode=x64compatible
 WizardStyle=modern
 UninstallDisplayIcon={app}\{#MyAppExeName}
 PrivilegesRequired=lowest
-PrivilegesRequiredOverridesAllowed=dialog
 
 [Languages]
 Name: "japanese"; MessagesFile: "compiler:Languages\Japanese.isl"
